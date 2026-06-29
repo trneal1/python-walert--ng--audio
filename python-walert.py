@@ -556,6 +556,7 @@ class AirQualityReading:
 class AppState:
     def __init__(self) -> None:
         self.lock = threading.RLock()
+        self.output_lock = threading.RLock()
         self.reload_cond = threading.Condition(self.lock)
         self.reload_generation = 0
         self.started_monotonic = time.monotonic()
@@ -567,6 +568,7 @@ class AppState:
         self.zones = self._load_config_or_defaults()
         self.results: list[ZoneResult] = [ZoneResult() for _ in self.zones]
         self.acknowledged_alerts: set[str] = set()
+        self.acknowledged_generation = 0
         self.display_page = self._display_placeholder()
         self.desc_text = ""
         self.last_updated = "pending"
@@ -712,6 +714,7 @@ class AppState:
             return False
         with self.lock:
             self.acknowledged_alerts.add(key)
+            self.acknowledged_generation += 1
         return True
 
     def air_quality_snapshot(self) -> AirQualityReading:
@@ -756,29 +759,39 @@ class AppState:
     def replace_results(
         self,
         results: list[ZoneResult],
-        display_page: str,
         desc_text: str,
-        tft_rows: list[tuple[str, str]],
-        tft2_rows: list[tuple[str, str]],
     ) -> None:
         with self.lock:
             self.results = results
+            zones = [Zone(**asdict(z)) for z in self.zones]
             current_alert_keys = {
                 key
-                for zone, result in zip(self.zones, results)
+                for zone, result in zip(zones, results)
                 for alert in result.alerts
                 for key in acknowledgement_keys_to_retain(zone, alert)
             }
             self.acknowledged_alerts.intersection_update(current_alert_keys)
+            acknowledged = set(self.acknowledged_alerts)
+            acknowledged_generation = self.acknowledged_generation
+            display_rows = display_rows_from_results(zones, results, acknowledged)
+            output_results = suppress_acknowledged_alerts(zones, results, acknowledged)
+            tft_rows, tft2_rows = tft_rows_from_results(zones, output_results)
+            display_page = build_display_page(zones, display_rows)
             self.display_page = display_page
             self.desc_text = desc_text
             self.last_updated = now_local()
             self.tft_showing_alerts = bool(tft_rows)
             self.tft2_showing_area0_alerts = bool(tft2_rows)
         aq = self.air_quality_snapshot()
-        self.tft.render_alerts(tft_rows, self.stats, self.uptime_seconds(), aq)
-        self.tft2.render_area0_or_clock(tft2_rows, aq)
-        self.notify_reload()
+        with self.output_lock:
+            with self.lock:
+                if self.acknowledged_generation != acknowledged_generation:
+                    return
+            self.tft.render_alerts(tft_rows, self.stats, self.uptime_seconds(), aq)
+            self.tft2.render_area0_or_clock(tft2_rows, aq)
+            sync_area_leds(self, zones, output_results)
+            sync_audio_alerts(self, zones, output_results)
+            self.notify_reload()
 
     def notify_reload(self) -> None:
         with self.reload_cond:
@@ -1319,7 +1332,6 @@ def nws_reference_identifiers(value: Any) -> list[str]:
 def build_cycle(state: AppState) -> None:
     zones = state.zones_snapshot()
     previous_results = state.result_snapshot()
-    acknowledged = state.acknowledged_snapshot()
     results: list[ZoneResult] = [ZoneResult() for _ in zones]
     desc_sections: list[str] = []
 
@@ -1372,13 +1384,7 @@ def build_cycle(state: AppState) -> None:
 
     desc_sections.append("$$$$$")
     desc_text = "\n".join(section for section in desc_sections if section is not None)
-    display_rows = display_rows_from_results(zones, results, acknowledged)
-    display_page = build_display_page(zones, display_rows)
-    output_results = suppress_acknowledged_alerts(zones, results, acknowledged)
-    tft_rows, tft2_rows = tft_rows_from_results(zones, output_results)
-    state.replace_results(results, display_page, desc_text, tft_rows, tft2_rows)
-    sync_area_leds(state, zones, output_results)
-    sync_audio_alerts(state, zones, output_results)
+    state.replace_results(results, desc_text)
 
 
 def suppress_acknowledged_alerts(
@@ -2694,9 +2700,10 @@ def acknowledge_alert(form: dict[str, str]) -> str:
     if not STATE.acknowledge_alert(form.get("key", "")):
         return "/display"
     refresh_display_from_cached_results(STATE)
-    refresh_tft_from_cached_results(STATE)
-    refresh_leds_from_cached_results(STATE)
-    STATE.notify_reload()
+    with STATE.output_lock:
+        refresh_tft_from_cached_results(STATE)
+        refresh_leds_from_cached_results(STATE)
+        STATE.notify_reload()
     return "/display"
 
 
