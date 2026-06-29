@@ -98,6 +98,7 @@ GOOGLE_AIR_QUALITY_API_KEY = os.getenv(
 AIR_QUALITY_LAT = os.getenv("AIR_QUALITY_LAT", os.getenv("WALERT_AIR_QUALITY_LAT", ""))
 AIR_QUALITY_LON = os.getenv("AIR_QUALITY_LON", os.getenv("WALERT_AIR_QUALITY_LON", ""))
 AIR_QUALITY_INTERVAL_SECONDS = int(os.getenv("WALERT_AIR_QUALITY_INTERVAL_SECONDS", "3600"))
+AIR_QUALITY_RETRY_SECONDS = int(os.getenv("WALERT_AIR_QUALITY_RETRY_SECONDS", "60"))
 AIR_QUALITY_TIMEOUT = float(os.getenv("WALERT_AIR_QUALITY_TIMEOUT", "10"))
 
 TFT_HOST = os.getenv("TFT_HOST", "")
@@ -571,6 +572,7 @@ class AppState:
         self.last_updated = "pending"
         self.air_quality = AirQualityReading(error="Air quality pending")
         self.air_quality_last_fetch = 0.0
+        self.air_quality_next_fetch = 0.0
         self.fetch_thread: threading.Thread | None = None
         self.tft2_clock_thread: threading.Thread | None = None
         self.audio_alert_signatures: dict[str, set[tuple[str, str, str, str, str, str, str]]] = {}
@@ -728,16 +730,28 @@ class AppState:
         if not GOOGLE_AIR_QUALITY_API_KEY:
             with self.lock:
                 self.air_quality = AirQualityReading(error="Google AQ key not set")
+                self.air_quality_next_fetch = float("inf")
             return
         now = time.monotonic()
         with self.lock:
-            due = force or self.air_quality_last_fetch <= 0 or now - self.air_quality_last_fetch >= AIR_QUALITY_INTERVAL_SECONDS
+            due = force or self.air_quality_next_fetch <= 0 or now >= self.air_quality_next_fetch
             if not due:
                 return
-            self.air_quality_last_fetch = now
+            previous = self.air_quality
+            self.air_quality_next_fetch = now + max(1, AIR_QUALITY_RETRY_SECONDS)
         reading = fetch_air_quality(self.zones_snapshot())
         with self.lock:
-            self.air_quality = reading
+            now = time.monotonic()
+            if reading.ok:
+                self.air_quality = reading
+                self.air_quality_last_fetch = now
+                self.air_quality_next_fetch = now + max(1, AIR_QUALITY_INTERVAL_SECONDS)
+                return
+            self.air_quality_next_fetch = now + max(1, AIR_QUALITY_RETRY_SECONDS)
+            if previous.ok:
+                LOG.warning("Air quality fetch failed; keeping previous reading: %s", reading.error)
+            else:
+                self.air_quality = reading
 
     def replace_results(
         self,
@@ -2282,13 +2296,6 @@ def build_stats_page() -> str:
         + ("".join(rows) if rows else "<tr><td colspan='9'>No zones configured</td></tr>")
         + "</tbody></table></div>"
     )
-    buffer_card = (
-        "<div class='card'><div class='card-title'>Page / Detail Sizes</div>"
-        "<table class='timing-table'><thead><tr><th>Object</th><th>Used bytes</th></tr></thead><tbody>"
-        f"<tr><td>desc_text</td><td>{len(STATE.desc_text.encode('utf-8'))}</td></tr>"
-        f"<tr><td>display_page</td><td>{len(STATE.display_page.encode('utf-8'))}</td></tr>"
-        "</tbody></table></div>"
-    )
     actions = (
         "<div class='card'><div class='card-title'>Actions</div>"
         "<a href='/flush' class='btn btn-danger' onclick=\"return confirm('Reset all counters?')\">&#x1F5D1; Reset Statistics</a>"
@@ -2297,7 +2304,7 @@ def build_stats_page() -> str:
     body = (
         "<div class='page'><div class='page-title'><span>&#x1F4CA;</span>Runtime Statistics</div>"
         f"<div class='page-subtitle'>Last display build: {safe(STATE.last_updated)}</div>"
-        f"{stat_boxes}{zone_table}{buffer_card}{actions}{footer_html()}</div>"
+        f"{stat_boxes}{zone_table}{actions}{footer_html()}</div>"
     )
     return page_shell("Stats", body, refresh_seconds=ALERT_CYCLE_SECONDS)
 
@@ -2784,6 +2791,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--air-quality-lat", default=AIR_QUALITY_LAT, help="Air quality latitude. Env: AIR_QUALITY_LAT or WALERT_AIR_QUALITY_LAT")
     parser.add_argument("--air-quality-lon", default=AIR_QUALITY_LON, help="Air quality longitude. Env: AIR_QUALITY_LON or WALERT_AIR_QUALITY_LON")
     parser.add_argument("--air-quality-interval-seconds", type=int, default=AIR_QUALITY_INTERVAL_SECONDS, help="Air quality fetch interval while idle. Env: WALERT_AIR_QUALITY_INTERVAL_SECONDS")
+    parser.add_argument("--air-quality-retry-seconds", type=int, default=AIR_QUALITY_RETRY_SECONDS, help="Air quality retry interval after failed fetches. Env: WALERT_AIR_QUALITY_RETRY_SECONDS")
     parser.add_argument("--air-quality-timeout", type=float, default=AIR_QUALITY_TIMEOUT, help="Google Air Quality request timeout in seconds. Env: WALERT_AIR_QUALITY_TIMEOUT")
     parser.add_argument("--tft-host", default=TFT_HOST, help="Remote TFT host. Env: TFT_HOST")
     parser.add_argument("--tft-port", type=int, default=TFT_PORT, help="Remote TFT port. Env: TFT_PORT")
@@ -2808,7 +2816,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def apply_cli_config(argv: list[str] | None = None) -> None:
     global ALERT_CYCLE_SECONDS, HTTP_BIND, HTTP_PORT
     global CONFIG_PATH, RUNTIME_PATH, NWS_USER_AGENT, NWS_TIMEOUT
-    global GOOGLE_AIR_QUALITY_API_KEY, AIR_QUALITY_LAT, AIR_QUALITY_LON, AIR_QUALITY_INTERVAL_SECONDS, AIR_QUALITY_TIMEOUT
+    global GOOGLE_AIR_QUALITY_API_KEY, AIR_QUALITY_LAT, AIR_QUALITY_LON, AIR_QUALITY_INTERVAL_SECONDS, AIR_QUALITY_RETRY_SECONDS, AIR_QUALITY_TIMEOUT
     global TFT_HOST, TFT_PORT, TFT_DISPLAY, TFT_ROTATION, TFT_TIMEOUT, LOG_LEVEL
     global TFT2_HOST, TFT2_PORT, TFT2_DISPLAY, TFT2_ROTATION, TFT2_TIMEOUT
     global LED_HOST, LED_PORT, LED_TIMEOUT
@@ -2826,6 +2834,7 @@ def apply_cli_config(argv: list[str] | None = None) -> None:
     AIR_QUALITY_LAT = args.air_quality_lat
     AIR_QUALITY_LON = args.air_quality_lon
     AIR_QUALITY_INTERVAL_SECONDS = args.air_quality_interval_seconds
+    AIR_QUALITY_RETRY_SECONDS = args.air_quality_retry_seconds
     AIR_QUALITY_TIMEOUT = args.air_quality_timeout
     TFT_HOST = args.tft_host
     TFT_PORT = args.tft_port
