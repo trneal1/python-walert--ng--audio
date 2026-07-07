@@ -82,9 +82,9 @@ The Display page lists active alerts by weather group and zone. Each row shows:
 
 - Zone label
 - Alert event
-- Issued time in UTC
+- Issued time in local time
 - NWS message type
-- Expiration time in UTC
+- Expiration time in local time
 - A link to the complete alert detail
 
 The page updates automatically after the service processes new data.

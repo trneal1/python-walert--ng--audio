@@ -2056,7 +2056,7 @@ def build_display_page(zones: list[Zone], rows: list[str]) -> str:
     else:
         content = (
             "<div class='card'><table class='alert-table'><thead><tr>"
-            "<th>Zone</th><th>Alert</th><th>Issued (UTC)</th><th>Type</th><th>Expires (UTC)</th><th>Detail</th>"
+            "<th>Zone</th><th>Alert</th><th>Issued (Local)</th><th>Type</th><th>Expires (Local)</th><th>Detail</th>"
             "</tr></thead><tbody>"
             + "".join(rows)
             + "</tbody></table></div>"
