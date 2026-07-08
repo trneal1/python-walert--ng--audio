@@ -100,6 +100,7 @@ AIR_QUALITY_LON = os.getenv("AIR_QUALITY_LON", os.getenv("WALERT_AIR_QUALITY_LON
 AIR_QUALITY_INTERVAL_SECONDS = int(os.getenv("WALERT_AIR_QUALITY_INTERVAL_SECONDS", "3600"))
 AIR_QUALITY_RETRY_SECONDS = int(os.getenv("WALERT_AIR_QUALITY_RETRY_SECONDS", "60"))
 AIR_QUALITY_TIMEOUT = float(os.getenv("WALERT_AIR_QUALITY_TIMEOUT", "10"))
+TFT_ALERT_PAGE_SECONDS = 10.0
 
 TFT_HOST = os.getenv("TFT_HOST", "")
 TFT_PORT = int(os.getenv("TFT_PORT", "8888"))
@@ -850,9 +851,7 @@ class AppState:
 
     def _clock_loop(self) -> None:
         while True:
-            delay = 60.0 - (time.time() % 60.0)
-            if delay < 0.05:
-                delay = 60.0
+            delay = TFT_ALERT_PAGE_SECONDS
             if self.shutdown_event.wait(delay):
                 return
             with self.lock:
@@ -865,8 +864,12 @@ class AppState:
                 aq = None
             if not tft_showing_alerts:
                 self.tft.render_clock("NO ACTIVE ALERTS", aq)
+            else:
+                self.tft.render_next_alert_page()
             if not tft2_showing_alerts:
                 self.tft2.render_clock("NO ACTIVE AREA 0 ALERTS", aq)
+            else:
+                self.tft2.render_next_alert_page()
 
     def shutdown(self) -> None:
         self.shutdown_event.set()
@@ -926,6 +929,11 @@ class RemoteTFT:
         self.configured = bool(host)
         self.clock_visible = False
         self.last_clock_key = ""
+        self.alert_header = ""
+        self.alert_footer = ""
+        self.alert_rows: list[tuple[str, str]] = []
+        self.alert_rows_key: tuple[tuple[str, str], ...] = ()
+        self.alert_page_index = 0
 
     def connect_if_configured(self) -> None:
         if not self.configured:
@@ -1013,22 +1021,108 @@ class RemoteTFT:
         if not rows:
             self.render_clock("NO ACTIVE ALERTS", air_quality)
             return
-        rendered: list[tuple[str, str, int]] = [
-            (f"Weather alerts {short_time()}", "yellow", 2),
-        ]
-        for text, color in rows[:18]:
-            rendered.append((text, color, 1))
-        rendered.append((f"$$ t={uptime_seconds} c={stats.connects} h={stats.badhttp} b={stats.reboots} r={stats.restarts}", "green", 1))
-        self.render_lines(rendered)
+        self._set_alert_content(
+            f"Weather alerts {short_time()}",
+            rows,
+            f"$$ t={uptime_seconds} c={stats.connects} h={stats.badhttp} b={stats.reboots} r={stats.restarts}",
+        )
+        self.render_next_alert_page(advance=False)
 
     def render_area0_or_clock(self, rows: list[tuple[str, str]], air_quality: AirQualityReading | None = None) -> None:
         if not rows:
             self.render_clock("NO ACTIVE AREA 0 ALERTS", air_quality)
             return
-        rendered: list[tuple[str, str, int]] = [(f"Area 0 {short_time()}", "magenta", 2)]
-        for text, color in rows[:14]:
-            rendered.append((text, color, 1))
-        self.render_lines(rendered)
+        self._set_alert_content(f"Area 0 {short_time()}", rows, "")
+        self.render_next_alert_page(advance=False)
+
+    def _set_alert_content(self, header: str, rows: list[tuple[str, str]], footer: str) -> None:
+        with self.lock:
+            rows_key = tuple(rows)
+            if rows_key != self.alert_rows_key:
+                self.alert_page_index = 0
+                self.alert_rows_key = rows_key
+            self.alert_header = header
+            self.alert_rows = list(rows)
+            self.alert_footer = footer
+            self.clock_visible = False
+
+    def render_next_alert_page(self, *, advance: bool = True) -> None:
+        with self.lock:
+            if not self.alert_rows:
+                return
+            header = self.alert_header
+            rows = list(self.alert_rows)
+            footer = self.alert_footer
+
+        def draw(tft: Any) -> None:
+            width = max(1, int(getattr(tft, "width", 320)))
+            height = max(1, int(getattr(tft, "height", 240)))
+            row_wrap = max(1, width // 6)
+            header_wrap = max(1, width // 12)
+
+            header_chunks = split_visual(header, header_wrap)
+            header_height = len(header_chunks) * 21
+            footer_height = 12
+            available_height = max(12, height - header_height - footer_height)
+
+            row_units: list[list[tuple[str, str]]] = []
+            for text, color in rows:
+                clean = str(text).replace("\r", " ").replace("\n", " ")
+                if not clean:
+                    row_units.append([("", color)])
+                    continue
+                row_units.append([(chunk, color) for chunk in split_visual(clean, row_wrap)])
+
+            pages: list[list[tuple[str, str]]] = []
+            current: list[tuple[str, str]] = []
+            current_height = 0
+            for unit in row_units:
+                unit_height = 10 if len(unit) == 1 and unit[0][0] == "" else len(unit) * 12
+                if current and current_height + unit_height > available_height:
+                    pages.append(current)
+                    current = []
+                    current_height = 0
+                if unit_height > available_height:
+                    for line in unit:
+                        line_height = 10 if not line[0] else 12
+                        if current and current_height + line_height > available_height:
+                            pages.append(current)
+                            current = []
+                            current_height = 0
+                        current.append(line)
+                        current_height += line_height
+                    continue
+                current.extend(unit)
+                current_height += unit_height
+            if current or not pages:
+                pages.append(current)
+
+            with self.lock:
+                if advance and pages:
+                    self.alert_page_index = (self.alert_page_index + 1) % len(pages)
+                else:
+                    self.alert_page_index %= len(pages)
+                page_index = self.alert_page_index
+
+            tft.fill_screen("black")
+            y = 0
+            for chunk in header_chunks:
+                tft.text(0, y, chunk, color="yellow" if self.name == "TFT" else "magenta", size=2)
+                y += 21
+            for line, color in pages[page_index]:
+                if not line:
+                    y += 10
+                    continue
+                if y > height - footer_height - 12:
+                    break
+                tft.text(0, y, line, color=color, size=1)
+                y += 12
+
+            page_label = f"p {page_index + 1}/{len(pages)}"
+            footer_text = f"{footer} {page_label}".strip() if footer else page_label
+            tft.text(0, max(0, height - 12), footer_text, color="green", size=1)
+
+        self._with_terminal(draw)
 
     def render_clock(self, subtitle: str = "NO ACTIVE ALERTS", air_quality: AirQualityReading | None = None) -> None:
         time_text = clock_time()
