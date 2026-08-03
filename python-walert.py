@@ -18,10 +18,10 @@ import importlib.util
 import inspect
 import json
 import logging
-import os
 import queue
 import re
 import socket
+import sys
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -57,9 +57,10 @@ except Exception:  # pragma: no cover - allows web-only operation if TFT library
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 MAX_ZONES = 15
-ALERT_CYCLE_SECONDS = int(os.getenv("ALERT_CYCLE_SECONDS", "60"))
-HTTP_BIND = os.getenv("WALERT_BIND", "0.0.0.0")
-HTTP_PORT = int(os.getenv("WALERT_PORT", "8080"))
+SETTINGS_PATH = Path("weatheralert_settings.json")
+ALERT_CYCLE_SECONDS = 60
+HTTP_BIND = "0.0.0.0"
+HTTP_PORT = 8080
 
 DEFAULT_ZONES = [
     {"id": "NCC183", "code": "NC W", "active": True, "type": "same", "lat": "", "lon": "", "led_group": 0},
@@ -82,50 +83,44 @@ STATE_FIPS_TO_AREA = {
     "55": "WI", "56": "WY", "60": "AS", "66": "GU", "69": "MP", "72": "PR", "78": "VI",
 }
 
-CONFIG_PATH = Path(os.getenv("WALERT_CONFIG", "weatheralert_config.json"))
-RUNTIME_PATH = Path(os.getenv("WALERT_RUNTIME", "weatheralert_runtime.json"))
+CONFIG_PATH = Path("weatheralert_config.json")
+RUNTIME_PATH = Path("weatheralert_runtime.json")
 
-NWS_USER_AGENT = os.getenv(
-    "WALERT_USER_AGENT",
-    "WeatherAlertPython/1.0 (set WALERT_USER_AGENT with your contact email)",
-)
-NWS_TIMEOUT = float(os.getenv("WALERT_NWS_TIMEOUT", "60"))
+NWS_USER_AGENT = "WeatherAlertPython/1.0 (set user_agent in weatheralert_settings.json with your contact email)"
+NWS_TIMEOUT = 60.0
 
-GOOGLE_AIR_QUALITY_API_KEY = os.getenv(
-    "GOOGLE_AIR_QUALITY_API_KEY",
-    os.getenv("WALERT_GOOGLE_AIR_QUALITY_API_KEY", ""),
-)
-AIR_QUALITY_LAT = os.getenv("AIR_QUALITY_LAT", os.getenv("WALERT_AIR_QUALITY_LAT", ""))
-AIR_QUALITY_LON = os.getenv("AIR_QUALITY_LON", os.getenv("WALERT_AIR_QUALITY_LON", ""))
-AIR_QUALITY_INTERVAL_SECONDS = int(os.getenv("WALERT_AIR_QUALITY_INTERVAL_SECONDS", "3600"))
-AIR_QUALITY_RETRY_SECONDS = int(os.getenv("WALERT_AIR_QUALITY_RETRY_SECONDS", "60"))
-AIR_QUALITY_TIMEOUT = float(os.getenv("WALERT_AIR_QUALITY_TIMEOUT", "10"))
+GOOGLE_AIR_QUALITY_API_KEY = ""
+AIR_QUALITY_LAT = ""
+AIR_QUALITY_LON = ""
+AIR_QUALITY_INTERVAL_SECONDS = 3600
+AIR_QUALITY_RETRY_SECONDS = 60
+AIR_QUALITY_TIMEOUT = 10.0
 TFT_ALERT_PAGE_SECONDS = 10.0
 
-TFT_HOST = os.getenv("TFT_HOST", "")
-TFT_PORT = int(os.getenv("TFT_PORT", "8888"))
-TFT_DISPLAY = os.getenv("TFT_DISPLAY", "ili9341")
-TFT_ROTATION = int(os.getenv("TFT_ROTATION", "1"))
-TFT_TIMEOUT = float(os.getenv("TFT_TIMEOUT", "5.0"))
+TFT_HOST = ""
+TFT_PORT = 8888
+TFT_DISPLAY = "ili9341"
+TFT_ROTATION = 1
+TFT_TIMEOUT = 5.0
 
-TFT2_HOST = os.getenv("TFT2_HOST", "")
-TFT2_PORT = int(os.getenv("TFT2_PORT", "8888"))
-TFT2_DISPLAY = os.getenv("TFT2_DISPLAY", TFT_DISPLAY)
-TFT2_ROTATION = int(os.getenv("TFT2_ROTATION", str(TFT_ROTATION)))
-TFT2_TIMEOUT = float(os.getenv("TFT2_TIMEOUT", str(TFT_TIMEOUT)))
+TFT2_HOST = ""
+TFT2_PORT = 8888
+TFT2_DISPLAY = TFT_DISPLAY
+TFT2_ROTATION = TFT_ROTATION
+TFT2_TIMEOUT = TFT_TIMEOUT
 
-LED_HOST = os.getenv("LED_HOST", os.getenv("WALERT_LED_HOST", ""))
-LED_PORT = int(os.getenv("LED_PORT", os.getenv("WALERT_LED_PORT", "7777")))
-LED_TIMEOUT = float(os.getenv("LED_TIMEOUT", os.getenv("WALERT_LED_TIMEOUT", "2.0")))
+LED_HOST = ""
+LED_PORT = 7777
+LED_TIMEOUT = 2.0
 LED_COUNT = 8
 LED_BLINK_SECONDS = 30
 LED_BLINK_INTERVAL_MS = 1000
 
-AUDIO_HOST = os.getenv("AUDIO_HOST", os.getenv("WALERT_AUDIO_HOST", ""))
-AUDIO_PORT = int(os.getenv("AUDIO_PORT", os.getenv("WALERT_AUDIO_PORT", "0")))
-AUDIO_TIMEOUT = float(os.getenv("AUDIO_TIMEOUT", os.getenv("WALERT_AUDIO_TIMEOUT", "2.0")))
+AUDIO_HOST = ""
+AUDIO_PORT = 0
+AUDIO_TIMEOUT = 2.0
 
-LOG_LEVEL = os.getenv("WALERT_LOG_LEVEL", "INFO").upper()
+LOG_LEVEL = "INFO"
 LOG = logging.getLogger("weatheralert")
 
 
@@ -2881,49 +2876,133 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Weather alert web UI and remote TFT display service."
     )
-    parser.add_argument("--alert-cycle-seconds", type=int, default=ALERT_CYCLE_SECONDS, help="Fetch interval in seconds. Env: ALERT_CYCLE_SECONDS")
-    parser.add_argument("--bind", default=HTTP_BIND, help="HTTP bind address. Env: WALERT_BIND")
-    parser.add_argument("--port", type=int, default=HTTP_PORT, help="HTTP port. Env: WALERT_PORT")
-    parser.add_argument("--config", type=Path, default=CONFIG_PATH, help="Zone configuration file. Env: WALERT_CONFIG")
-    parser.add_argument("--runtime", type=Path, default=RUNTIME_PATH, help="Runtime statistics file. Env: WALERT_RUNTIME")
-    parser.add_argument("--user-agent", default=NWS_USER_AGENT, help="NWS User-Agent header. Env: WALERT_USER_AGENT")
-    parser.add_argument("--nws-timeout", type=float, default=NWS_TIMEOUT, help="NWS request timeout in seconds. Env: WALERT_NWS_TIMEOUT")
-    parser.add_argument("--google-air-quality-api-key", default=GOOGLE_AIR_QUALITY_API_KEY, help="Google Air Quality API key. Env: GOOGLE_AIR_QUALITY_API_KEY or WALERT_GOOGLE_AIR_QUALITY_API_KEY")
-    parser.add_argument("--air-quality-lat", default=AIR_QUALITY_LAT, help="Air quality latitude. Env: AIR_QUALITY_LAT or WALERT_AIR_QUALITY_LAT")
-    parser.add_argument("--air-quality-lon", default=AIR_QUALITY_LON, help="Air quality longitude. Env: AIR_QUALITY_LON or WALERT_AIR_QUALITY_LON")
-    parser.add_argument("--air-quality-interval-seconds", type=int, default=AIR_QUALITY_INTERVAL_SECONDS, help="Air quality fetch interval while idle. Env: WALERT_AIR_QUALITY_INTERVAL_SECONDS")
-    parser.add_argument("--air-quality-retry-seconds", type=int, default=AIR_QUALITY_RETRY_SECONDS, help="Air quality retry interval after failed fetches. Env: WALERT_AIR_QUALITY_RETRY_SECONDS")
-    parser.add_argument("--air-quality-timeout", type=float, default=AIR_QUALITY_TIMEOUT, help="Google Air Quality request timeout in seconds. Env: WALERT_AIR_QUALITY_TIMEOUT")
-    parser.add_argument("--tft-host", default=TFT_HOST, help="Remote TFT host. Env: TFT_HOST")
-    parser.add_argument("--tft-port", type=int, default=TFT_PORT, help="Remote TFT port. Env: TFT_PORT")
-    parser.add_argument("--tft-display", default=TFT_DISPLAY, help="TFT display type. Env: TFT_DISPLAY")
-    parser.add_argument("--tft-rotation", type=int, default=TFT_ROTATION, help="TFT rotation. Env: TFT_ROTATION")
-    parser.add_argument("--tft-timeout", type=float, default=TFT_TIMEOUT, help="Remote TFT timeout in seconds. Env: TFT_TIMEOUT")
-    parser.add_argument("--tft2-host", default=TFT2_HOST, help="Second remote TFT host. Env: TFT2_HOST")
-    parser.add_argument("--tft2-port", type=int, default=TFT2_PORT, help="Second remote TFT port. Env: TFT2_PORT")
-    parser.add_argument("--tft2-display", default=TFT2_DISPLAY, help="Second TFT display type. Env: TFT2_DISPLAY")
-    parser.add_argument("--tft2-rotation", type=int, default=TFT2_ROTATION, help="Second TFT rotation. Env: TFT2_ROTATION")
-    parser.add_argument("--tft2-timeout", type=float, default=TFT2_TIMEOUT, help="Second remote TFT timeout in seconds. Env: TFT2_TIMEOUT")
-    parser.add_argument("--led-host", default=LED_HOST, help="Remote ESP8266 LED controller host. Env: LED_HOST or WALERT_LED_HOST")
-    parser.add_argument("--led-port", type=int, default=LED_PORT, help="Remote ESP8266 LED controller TCP port. Env: LED_PORT or WALERT_LED_PORT")
-    parser.add_argument("--led-timeout", type=float, default=LED_TIMEOUT, help="Remote ESP8266 LED controller timeout in seconds. Env: LED_TIMEOUT or WALERT_LED_TIMEOUT")
-    parser.add_argument("--audio-host", default=AUDIO_HOST, help="Audio announcement TCP host. Env: AUDIO_HOST or WALERT_AUDIO_HOST")
-    parser.add_argument("--audio-port", type=int, default=AUDIO_PORT, help="Audio announcement TCP port. Env: AUDIO_PORT or WALERT_AUDIO_PORT")
-    parser.add_argument("--audio-timeout", type=float, default=AUDIO_TIMEOUT, help="Audio announcement TCP timeout in seconds. Env: AUDIO_TIMEOUT or WALERT_AUDIO_TIMEOUT")
-    parser.add_argument("--log-level", default=LOG_LEVEL, help="Python log level. Env: WALERT_LOG_LEVEL")
+    parser.add_argument("--settings", type=Path, default=SETTINGS_PATH, help="Optional app settings JSON file.")
+    parser.add_argument("--alert-cycle-seconds", type=int, default=ALERT_CYCLE_SECONDS, help="Fetch interval in seconds.")
+    parser.add_argument("--bind", default=HTTP_BIND, help="HTTP bind address.")
+    parser.add_argument("--port", type=int, default=HTTP_PORT, help="HTTP port.")
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH, help="Saved zone configuration file.")
+    parser.add_argument("--runtime", type=Path, default=RUNTIME_PATH, help="Runtime statistics file.")
+    parser.add_argument("--user-agent", default=NWS_USER_AGENT, help="NWS User-Agent header.")
+    parser.add_argument("--nws-timeout", type=float, default=NWS_TIMEOUT, help="NWS request timeout in seconds.")
+    parser.add_argument("--google-air-quality-api-key", default=GOOGLE_AIR_QUALITY_API_KEY, help="Google Air Quality API key.")
+    parser.add_argument("--air-quality-lat", default=AIR_QUALITY_LAT, help="Air quality latitude.")
+    parser.add_argument("--air-quality-lon", default=AIR_QUALITY_LON, help="Air quality longitude.")
+    parser.add_argument("--air-quality-interval-seconds", type=int, default=AIR_QUALITY_INTERVAL_SECONDS, help="Air quality fetch interval while idle.")
+    parser.add_argument("--air-quality-retry-seconds", type=int, default=AIR_QUALITY_RETRY_SECONDS, help="Air quality retry interval after failed fetches.")
+    parser.add_argument("--air-quality-timeout", type=float, default=AIR_QUALITY_TIMEOUT, help="Google Air Quality request timeout in seconds.")
+    parser.add_argument("--tft-host", default=TFT_HOST, help="Remote TFT host.")
+    parser.add_argument("--tft-port", type=int, default=TFT_PORT, help="Remote TFT port.")
+    parser.add_argument("--tft-display", default=TFT_DISPLAY, help="TFT display type.")
+    parser.add_argument("--tft-rotation", type=int, default=TFT_ROTATION, help="TFT rotation.")
+    parser.add_argument("--tft-timeout", type=float, default=TFT_TIMEOUT, help="Remote TFT timeout in seconds.")
+    parser.add_argument("--tft2-host", default=TFT2_HOST, help="Second remote TFT host.")
+    parser.add_argument("--tft2-port", type=int, default=TFT2_PORT, help="Second remote TFT port.")
+    parser.add_argument("--tft2-display", default=TFT2_DISPLAY, help="Second TFT display type.")
+    parser.add_argument("--tft2-rotation", type=int, default=TFT2_ROTATION, help="Second TFT rotation.")
+    parser.add_argument("--tft2-timeout", type=float, default=TFT2_TIMEOUT, help="Second remote TFT timeout in seconds.")
+    parser.add_argument("--led-host", default=LED_HOST, help="Remote ESP8266 LED controller host.")
+    parser.add_argument("--led-port", type=int, default=LED_PORT, help="Remote ESP8266 LED controller TCP port.")
+    parser.add_argument("--led-timeout", type=float, default=LED_TIMEOUT, help="Remote ESP8266 LED controller timeout in seconds.")
+    parser.add_argument("--audio-host", default=AUDIO_HOST, help="Audio announcement TCP host.")
+    parser.add_argument("--audio-port", type=int, default=AUDIO_PORT, help="Audio announcement TCP port.")
+    parser.add_argument("--audio-timeout", type=float, default=AUDIO_TIMEOUT, help="Audio announcement TCP timeout in seconds.")
+    parser.add_argument("--log-level", default=LOG_LEVEL, help="Python log level.")
     return parser
+
+
+SETTING_FIELDS: dict[str, tuple[str, Any]] = {
+    "alert_cycle_seconds": ("ALERT_CYCLE_SECONDS", int),
+    "bind": ("HTTP_BIND", str),
+    "port": ("HTTP_PORT", int),
+    "config": ("CONFIG_PATH", Path),
+    "runtime": ("RUNTIME_PATH", Path),
+    "user_agent": ("NWS_USER_AGENT", str),
+    "nws_timeout": ("NWS_TIMEOUT", float),
+    "google_air_quality_api_key": ("GOOGLE_AIR_QUALITY_API_KEY", str),
+    "air_quality_lat": ("AIR_QUALITY_LAT", str),
+    "air_quality_lon": ("AIR_QUALITY_LON", str),
+    "air_quality_interval_seconds": ("AIR_QUALITY_INTERVAL_SECONDS", int),
+    "air_quality_retry_seconds": ("AIR_QUALITY_RETRY_SECONDS", int),
+    "air_quality_timeout": ("AIR_QUALITY_TIMEOUT", float),
+    "tft_host": ("TFT_HOST", str),
+    "tft_port": ("TFT_PORT", int),
+    "tft_display": ("TFT_DISPLAY", str),
+    "tft_rotation": ("TFT_ROTATION", int),
+    "tft_timeout": ("TFT_TIMEOUT", float),
+    "tft2_host": ("TFT2_HOST", str),
+    "tft2_port": ("TFT2_PORT", int),
+    "tft2_display": ("TFT2_DISPLAY", str),
+    "tft2_rotation": ("TFT2_ROTATION", int),
+    "tft2_timeout": ("TFT2_TIMEOUT", float),
+    "led_host": ("LED_HOST", str),
+    "led_port": ("LED_PORT", int),
+    "led_timeout": ("LED_TIMEOUT", float),
+    "audio_host": ("AUDIO_HOST", str),
+    "audio_port": ("AUDIO_PORT", int),
+    "audio_timeout": ("AUDIO_TIMEOUT", float),
+    "log_level": ("LOG_LEVEL", str),
+}
+
+
+def normalize_setting_key(key: str) -> str:
+    return key.strip().lower().replace("-", "_")
+
+
+def load_app_settings(path: Path) -> None:
+    if not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Could not read settings file {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"Settings file {path} must contain a JSON object")
+
+    updated: set[str] = set()
+    for raw_key, raw_value in data.items():
+        key = normalize_setting_key(str(raw_key))
+        field = SETTING_FIELDS.get(key)
+        if field is None:
+            print(f"Ignoring unknown setting in {path}: {raw_key}", file=sys.stderr)
+            continue
+        global_name, caster = field
+        try:
+            value = caster(raw_value)
+        except Exception as exc:
+            raise ValueError(f"Invalid value for {raw_key} in {path}: {raw_value!r}") from exc
+        if global_name == "LOG_LEVEL":
+            value = str(value).upper()
+        globals()[global_name] = value
+        updated.add(key)
+
+    if "tft_display" in updated and "tft2_display" not in updated:
+        globals()["TFT2_DISPLAY"] = TFT_DISPLAY
+    if "tft_rotation" in updated and "tft2_rotation" not in updated:
+        globals()["TFT2_ROTATION"] = TFT_ROTATION
+    if "tft_timeout" in updated and "tft2_timeout" not in updated:
+        globals()["TFT2_TIMEOUT"] = TFT_TIMEOUT
 
 
 def apply_cli_config(argv: list[str] | None = None) -> None:
     global ALERT_CYCLE_SECONDS, HTTP_BIND, HTTP_PORT
-    global CONFIG_PATH, RUNTIME_PATH, NWS_USER_AGENT, NWS_TIMEOUT
+    global SETTINGS_PATH, CONFIG_PATH, RUNTIME_PATH, NWS_USER_AGENT, NWS_TIMEOUT
     global GOOGLE_AIR_QUALITY_API_KEY, AIR_QUALITY_LAT, AIR_QUALITY_LON, AIR_QUALITY_INTERVAL_SECONDS, AIR_QUALITY_RETRY_SECONDS, AIR_QUALITY_TIMEOUT
     global TFT_HOST, TFT_PORT, TFT_DISPLAY, TFT_ROTATION, TFT_TIMEOUT, LOG_LEVEL
     global TFT2_HOST, TFT2_PORT, TFT2_DISPLAY, TFT2_ROTATION, TFT2_TIMEOUT
     global LED_HOST, LED_PORT, LED_TIMEOUT
     global AUDIO_HOST, AUDIO_PORT, AUDIO_TIMEOUT
 
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--settings", type=Path, default=SETTINGS_PATH)
+    pre_args, _ = pre_parser.parse_known_args(argv)
+    SETTINGS_PATH = pre_args.settings
+    try:
+        load_app_settings(SETTINGS_PATH)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
     args = build_arg_parser().parse_args(argv)
+    SETTINGS_PATH = args.settings
     ALERT_CYCLE_SECONDS = args.alert_cycle_seconds
     HTTP_BIND = args.bind
     HTTP_PORT = args.port

@@ -65,12 +65,15 @@ Stop the application by pressing `Ctrl+C` in its PowerShell window. A normal shu
 
 ### Recommended User-Agent
 
-The NWS requests that API clients identify themselves. Set a user-agent containing your contact information:
+The NWS requests that API clients identify themselves. Add a user-agent containing your contact information to `weatheralert_settings.json`:
 
-```powershell
-$env:WALERT_USER_AGENT='WeatherAlert/1.0 (your-email@example.com)'
-python python-walert.py
+```json
+{
+  "user_agent": "WeatherAlert/1.0 (your-email@example.com)"
+}
 ```
+
+The settings file is optional. When it exists, the app reads it at startup.
 
 ## 4. Web Interface
 
@@ -183,12 +186,13 @@ The application loads the saved configuration at startup when the file exists an
 
 LED output is enabled by setting an LED host. Each weather group maps directly to LED number 0 through 7.
 
-Set the controller address before startup:
+Set the controller address in `weatheralert_settings.json` before startup:
 
-```powershell
-$env:LED_HOST='192.168.1.60'
-$env:LED_PORT='7777'
-python python-walert.py
+```json
+{
+  "led_host": "192.168.1.60",
+  "led_port": 7777
+}
 ```
 
 When a group contains multiple unacknowledged alerts, the highest-priority event determines the LED color:
@@ -218,15 +222,15 @@ When no applicable alert is active, the display shows a clock. If air-quality da
 
 Example configuration:
 
-```powershell
-$env:TFT_HOST='192.168.1.70'
-$env:TFT_PORT='8888'
-$env:TFT_DISPLAY='ili9341'
-$env:TFT_ROTATION='1'
-
-$env:TFT2_HOST='192.168.1.71'
-$env:TFT2_PORT='8888'
-python python-walert.py
+```json
+{
+  "tft_host": "192.168.1.70",
+  "tft_port": 8888,
+  "tft_display": "ili9341",
+  "tft_rotation": 1,
+  "tft2_host": "192.168.1.71",
+  "tft2_port": 8888
+}
 ```
 
 If no TFT host is set, or the TFT library is unavailable, the web service continues to operate.
@@ -235,10 +239,11 @@ If no TFT host is set, or the TFT library is unavailable, the web service contin
 
 Audio output sends UTF-8 text over TCP, terminated by a carriage return. Configure the destination with:
 
-```powershell
-$env:AUDIO_HOST='192.168.1.80'
-$env:AUDIO_PORT='5000'
-python python-walert.py
+```json
+{
+  "audio_host": "192.168.1.80",
+  "audio_port": 5000
+}
 ```
 
 The app announces newly detected NWS messages of type `Alert`. It does not announce `Update` messages. The announcement format is similar to:
@@ -253,11 +258,12 @@ Use the Audio checkbox on the Config page to enable or disable announcements for
 
 Air quality is optional and appears on idle TFT clock screens. Set a Google Air Quality API key:
 
-```powershell
-$env:GOOGLE_AIR_QUALITY_API_KEY='your-api-key'
-$env:AIR_QUALITY_LAT='35.7796'
-$env:AIR_QUALITY_LON='-78.6382'
-python python-walert.py
+```json
+{
+  "google_air_quality_api_key": "your-api-key",
+  "air_quality_lat": "35.7796",
+  "air_quality_lon": "-78.6382"
+}
 ```
 
 If explicit coordinates are not configured, the app uses the first active latitude/longitude alert area. The default air-quality refresh interval is 3600 seconds.
@@ -280,6 +286,7 @@ Common options:
 
 | Option | Purpose | Default |
 |---|---|---|
+| `--settings` | Optional app settings file | `weatheralert_settings.json` |
 | `--bind` | Web server bind address | `0.0.0.0` |
 | `--port` | Web server port | `8080` |
 | `--alert-cycle-seconds` | NWS fetch interval | `60` |
@@ -293,7 +300,9 @@ Common options:
 | `--audio-host`, `--audio-port` | Audio TCP connection | Disabled |
 | `--log-level` | Python logging level | `INFO` |
 
-Command-line values override environment-variable defaults for that run.
+Settings-file keys match the long command-line option names without leading dashes. Use underscores or hyphens, for example `alert_cycle_seconds` or `alert-cycle-seconds`.
+
+Command-line values override settings-file values for that run.
 
 ## 11. Security and Network Access
 
@@ -322,7 +331,7 @@ Do not expose the app directly to the public internet. Use firewall restrictions
 - Allow enough time for the first fetch cycle.
 - Confirm internet access and DNS resolution for `api.weather.gov`.
 - Open the Stats page and inspect HTTP status, attempt count, and errors.
-- Set a valid `WALERT_USER_AGENT` containing contact information.
+- Set a valid `user_agent` in `weatheralert_settings.json` containing contact information.
 
 ### A zone returns unexpected alerts
 
@@ -353,4 +362,4 @@ It may have been acknowledged. Acknowledged alerts remain visible on the web pag
 | `weatheralert_config.json` | Saved zone and output configuration |
 | `weatheralert_runtime.json` | Persistent reboot, restart, connection, and HTTP-error counters |
 
-Alternative paths can be selected with `--config`, `--runtime`, `WALERT_CONFIG`, and `WALERT_RUNTIME`.
+Alternative paths can be selected with `--config`, `--runtime`, or by setting `config` and `runtime` in `weatheralert_settings.json`.

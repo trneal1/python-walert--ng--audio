@@ -1,0 +1,20 @@
+{
+  "user_agent": "WeatherAlert/1.0 (your-email@example.com)",
+  "bind": "0.0.0.0",
+  "port": 8080,
+  "alert_cycle_seconds": 60,
+  "config": "weatheralert_config.json",
+  "runtime": "weatheralert_runtime.json",
+  "led_host": "",
+  "led_port": 7777,
+  "tft_host": "",
+  "tft_port": 8888,
+  "tft2_host": "",
+  "tft2_port": 8888,
+  "audio_host": "",
+  "audio_port": 0,
+  "google_air_quality_api_key": "",
+  "air_quality_lat": "",
+  "air_quality_lon": "",
+  "log_level": "INFO"
+}
