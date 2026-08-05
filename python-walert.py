@@ -103,12 +103,6 @@ TFT_DISPLAY = "ili9341"
 TFT_ROTATION = 1
 TFT_TIMEOUT = 5.0
 
-TFT2_HOST = ""
-TFT2_PORT = 8888
-TFT2_DISPLAY = TFT_DISPLAY
-TFT2_ROTATION = TFT_ROTATION
-TFT2_TIMEOUT = TFT_TIMEOUT
-
 LED_HOST = ""
 LED_PORT = 7777
 LED_TIMEOUT = 2.0
@@ -572,18 +566,15 @@ class AppState:
         self.air_quality_last_fetch = 0.0
         self.air_quality_next_fetch = 0.0
         self.fetch_thread: threading.Thread | None = None
-        self.tft2_clock_thread: threading.Thread | None = None
+        self.tft_clock_thread: threading.Thread | None = None
         self.audio_alert_signatures: dict[str, set[tuple[str, str, str, str, str, str, str]]] = {}
         self.tft_showing_alerts = False
-        self.tft2_showing_area0_alerts = False
         self.shutdown_event = threading.Event()
         self.tft = RemoteTFT("TFT", TFT_HOST, TFT_PORT, TFT_DISPLAY, TFT_ROTATION, TFT_TIMEOUT)
-        self.tft2 = RemoteTFT("TFT2", TFT2_HOST, TFT2_PORT, TFT2_DISPLAY, TFT2_ROTATION, TFT2_TIMEOUT)
         self.leds = RemoteLEDController(LED_HOST, LED_PORT, LED_TIMEOUT)
         self.audio = RemoteAudioClock(AUDIO_HOST, AUDIO_PORT, AUDIO_TIMEOUT)
         self.leds.clear_all()
         self.tft.connect_if_configured()
-        self.tft2.connect_if_configured()
         self._render_boot()
 
     def uptime_seconds(self) -> int:
@@ -771,20 +762,18 @@ class AppState:
             acknowledged_generation = self.acknowledged_generation
             display_rows = display_rows_from_results(zones, results, acknowledged)
             output_results = suppress_acknowledged_alerts(zones, results, acknowledged)
-            tft_rows, tft2_rows = tft_rows_from_results(zones, output_results)
+            tft_rows = tft_rows_from_results(zones, output_results)
             display_page = build_display_page(zones, display_rows)
             self.display_page = display_page
             self.desc_text = desc_text
             self.last_updated = now_local()
             self.tft_showing_alerts = bool(tft_rows)
-            self.tft2_showing_area0_alerts = bool(tft2_rows)
         aq = self.air_quality_snapshot()
         with self.output_lock:
             with self.lock:
                 if self.acknowledged_generation != acknowledged_generation:
                     return
             self.tft.render_alerts(tft_rows, self.stats, self.uptime_seconds(), aq)
-            self.tft2.render_area0_or_clock(tft2_rows, aq)
             sync_area_leds(self, zones, output_results)
             sync_audio_alerts(self, zones, output_results)
             self.notify_reload()
@@ -820,15 +809,14 @@ class AppState:
             ]
         )
         self.update_air_quality_if_due(force=True)
-        self.tft2.render_clock("NO ACTIVE AREA 0 ALERTS", self.air_quality_snapshot())
 
     def start_fetch_loop(self) -> None:
         thread = threading.Thread(target=self._fetch_loop, name="alert-fetcher", daemon=True)
         self.fetch_thread = thread
         thread.start()
-        tft2_thread = threading.Thread(target=self._clock_loop, name="tft-clock", daemon=True)
-        self.tft2_clock_thread = tft2_thread
-        tft2_thread.start()
+        tft_thread = threading.Thread(target=self._clock_loop, name="tft-clock", daemon=True)
+        self.tft_clock_thread = tft_thread
+        tft_thread.start()
 
     def _fetch_loop(self) -> None:
         while not self.shutdown_event.is_set():
@@ -851,8 +839,7 @@ class AppState:
                 return
             with self.lock:
                 tft_showing_alerts = self.tft_showing_alerts
-                tft2_showing_alerts = self.tft2_showing_area0_alerts
-            if not tft_showing_alerts or not tft2_showing_alerts:
+            if not tft_showing_alerts:
                 self.update_air_quality_if_due()
                 aq = self.air_quality_snapshot()
             else:
@@ -861,15 +848,11 @@ class AppState:
                 self.tft.render_clock("NO ACTIVE ALERTS", aq)
             else:
                 self.tft.render_next_alert_page()
-            if not tft2_showing_alerts:
-                self.tft2.render_clock("NO ACTIVE AREA 0 ALERTS", aq)
-            else:
-                self.tft2.render_next_alert_page()
 
     def shutdown(self) -> None:
         self.shutdown_event.set()
         self.leds.clear_all()
-        for thread in (self.fetch_thread, self.tft2_clock_thread):
+        for thread in (self.fetch_thread, self.tft_clock_thread):
             if thread is not None and thread.is_alive():
                 thread.join(timeout=2.0)
 
@@ -1021,13 +1004,6 @@ class RemoteTFT:
             rows,
             f"$$ t={uptime_seconds} c={stats.connects} h={stats.badhttp} b={stats.reboots} r={stats.restarts}",
         )
-        self.render_next_alert_page(advance=False)
-
-    def render_area0_or_clock(self, rows: list[tuple[str, str]], air_quality: AirQualityReading | None = None) -> None:
-        if not rows:
-            self.render_clock("NO ACTIVE AREA 0 ALERTS", air_quality)
-            return
-        self._set_alert_content(f"Area 0 {short_time()}", rows, "")
         self.render_next_alert_page(advance=False)
 
     def _set_alert_content(self, header: str, rows: list[tuple[str, str]], footer: str) -> None:
@@ -1584,9 +1560,8 @@ def refresh_display_from_cached_results(state: AppState) -> None:
         state.display_page = build_display_page(zones, rows)
 
 
-def tft_rows_from_results(zones: list[Zone], results: list[ZoneResult]) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+def tft_rows_from_results(zones: list[Zone], results: list[ZoneResult]) -> list[tuple[str, str]]:
     tft_rows: list[tuple[str, str]] = []
-    tft2_rows: list[tuple[str, str]] = []
     last_tft_zone_idx: int | None = None
     for idx, zone in enumerate(zones):
         if not zone.active or not zone.tft or idx >= len(results):
@@ -1605,22 +1580,18 @@ def tft_rows_from_results(zones: list[Zone], results: list[ZoneResult]) -> tuple
                 tft_rows.append(("", "black"))
             tft_rows.append((tft_text, "magenta" if idx == 0 else tft_color))
             last_tft_zone_idx = idx
-            if idx == 0:
-                tft2_rows.append((tft_text, "magenta"))
-    return tft_rows, tft2_rows
+    return tft_rows
 
 
 def refresh_tft_from_cached_results(state: AppState) -> None:
     zones = state.zones_snapshot()
     results = state.result_snapshot()
     output_results = suppress_acknowledged_alerts(zones, results, state.acknowledged_snapshot())
-    tft_rows, tft2_rows = tft_rows_from_results(zones, output_results)
+    tft_rows = tft_rows_from_results(zones, output_results)
     with state.lock:
         state.tft_showing_alerts = bool(tft_rows)
-        state.tft2_showing_area0_alerts = bool(tft2_rows)
     aq = state.air_quality_snapshot()
     state.tft.render_alerts(tft_rows, state.stats, state.uptime_seconds(), aq)
-    state.tft2.render_area0_or_clock(tft2_rows, aq)
 
 
 def sync_area_leds(state: AppState, zones: list[Zone], results: list[ZoneResult]) -> None:
@@ -2895,11 +2866,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tft-display", default=TFT_DISPLAY, help="TFT display type.")
     parser.add_argument("--tft-rotation", type=int, default=TFT_ROTATION, help="TFT rotation.")
     parser.add_argument("--tft-timeout", type=float, default=TFT_TIMEOUT, help="Remote TFT timeout in seconds.")
-    parser.add_argument("--tft2-host", default=TFT2_HOST, help="Second remote TFT host.")
-    parser.add_argument("--tft2-port", type=int, default=TFT2_PORT, help="Second remote TFT port.")
-    parser.add_argument("--tft2-display", default=TFT2_DISPLAY, help="Second TFT display type.")
-    parser.add_argument("--tft2-rotation", type=int, default=TFT2_ROTATION, help="Second TFT rotation.")
-    parser.add_argument("--tft2-timeout", type=float, default=TFT2_TIMEOUT, help="Second remote TFT timeout in seconds.")
     parser.add_argument("--led-host", default=LED_HOST, help="Remote ESP8266 LED controller host.")
     parser.add_argument("--led-port", type=int, default=LED_PORT, help="Remote ESP8266 LED controller TCP port.")
     parser.add_argument("--led-timeout", type=float, default=LED_TIMEOUT, help="Remote ESP8266 LED controller timeout in seconds.")
@@ -2929,11 +2895,6 @@ SETTING_FIELDS: dict[str, tuple[str, Any]] = {
     "tft_display": ("TFT_DISPLAY", str),
     "tft_rotation": ("TFT_ROTATION", int),
     "tft_timeout": ("TFT_TIMEOUT", float),
-    "tft2_host": ("TFT2_HOST", str),
-    "tft2_port": ("TFT2_PORT", int),
-    "tft2_display": ("TFT2_DISPLAY", str),
-    "tft2_rotation": ("TFT2_ROTATION", int),
-    "tft2_timeout": ("TFT2_TIMEOUT", float),
     "led_host": ("LED_HOST", str),
     "led_port": ("LED_PORT", int),
     "led_timeout": ("LED_TIMEOUT", float),
@@ -2975,20 +2936,12 @@ def load_app_settings(path: Path) -> None:
         globals()[global_name] = value
         updated.add(key)
 
-    if "tft_display" in updated and "tft2_display" not in updated:
-        globals()["TFT2_DISPLAY"] = TFT_DISPLAY
-    if "tft_rotation" in updated and "tft2_rotation" not in updated:
-        globals()["TFT2_ROTATION"] = TFT_ROTATION
-    if "tft_timeout" in updated and "tft2_timeout" not in updated:
-        globals()["TFT2_TIMEOUT"] = TFT_TIMEOUT
-
 
 def apply_cli_config(argv: list[str] | None = None) -> None:
     global ALERT_CYCLE_SECONDS, HTTP_BIND, HTTP_PORT
     global SETTINGS_PATH, CONFIG_PATH, RUNTIME_PATH, NWS_USER_AGENT, NWS_TIMEOUT
     global GOOGLE_AIR_QUALITY_API_KEY, AIR_QUALITY_LAT, AIR_QUALITY_LON, AIR_QUALITY_INTERVAL_SECONDS, AIR_QUALITY_RETRY_SECONDS, AIR_QUALITY_TIMEOUT
     global TFT_HOST, TFT_PORT, TFT_DISPLAY, TFT_ROTATION, TFT_TIMEOUT, LOG_LEVEL
-    global TFT2_HOST, TFT2_PORT, TFT2_DISPLAY, TFT2_ROTATION, TFT2_TIMEOUT
     global LED_HOST, LED_PORT, LED_TIMEOUT
     global AUDIO_HOST, AUDIO_PORT, AUDIO_TIMEOUT
 
@@ -3021,11 +2974,6 @@ def apply_cli_config(argv: list[str] | None = None) -> None:
     TFT_DISPLAY = args.tft_display
     TFT_ROTATION = args.tft_rotation
     TFT_TIMEOUT = args.tft_timeout
-    TFT2_HOST = args.tft2_host
-    TFT2_PORT = args.tft2_port
-    TFT2_DISPLAY = args.tft2_display
-    TFT2_ROTATION = args.tft2_rotation
-    TFT2_TIMEOUT = args.tft2_timeout
     LED_HOST = args.led_host
     LED_PORT = args.led_port
     LED_TIMEOUT = args.led_timeout

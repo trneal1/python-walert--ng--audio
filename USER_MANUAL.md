@@ -211,12 +211,9 @@ A newly detected NWS message of type `Alert` blinks for approximately 30 seconds
 
 Unacknowledged `Update` messages affect the steady LED color according to their event priority. Updates are not treated as new-alert blink triggers.
 
-## 7. TFT Displays
+## 7. TFT Display
 
-Two optional TFT outputs are supported:
-
-- **TFT:** shows active alerts from every zone whose TFT option is enabled.
-- **TFT2:** shows alerts assigned to the first configured zone only.
+The optional TFT output shows active alerts from every zone whose TFT option is enabled.
 
 When no applicable alert is active, the display shows a clock. If air-quality data is configured, it is included on the idle clock screen.
 
@@ -227,9 +224,7 @@ Example configuration:
   "tft_host": "192.168.1.70",
   "tft_port": 8888,
   "tft_display": "ili9341",
-  "tft_rotation": 1,
-  "tft2_host": "192.168.1.71",
-  "tft2_port": 8888
+  "tft_rotation": 1
 }
 ```
 
@@ -295,8 +290,7 @@ Common options:
 | `--user-agent` | NWS request identity | Built-in value |
 | `--nws-timeout` | NWS request timeout | `60` seconds |
 | `--led-host`, `--led-port` | LED controller connection | Disabled / `7777` |
-| `--tft-host`, `--tft-port` | Primary TFT connection | Disabled / `8888` |
-| `--tft2-host`, `--tft2-port` | Secondary TFT connection | Disabled / `8888` |
+| `--tft-host`, `--tft-port` | TFT connection | Disabled / `8888` |
 | `--audio-host`, `--audio-port` | Audio TCP connection | Disabled |
 | `--log-level` | Python logging level | `INFO` |
 

@@ -9,8 +9,6 @@
   "led_port": 7777,
   "tft_host": "",
   "tft_port": 8888,
-  "tft2_host": "",
-  "tft2_port": 8888,
   "audio_host": "",
   "audio_port": 0,
   "google_air_quality_api_key": "",
