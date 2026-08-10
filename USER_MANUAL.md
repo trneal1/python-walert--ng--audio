@@ -10,6 +10,7 @@ WeatherAlert is a Python service that monitors active National Weather Service (
 - Optional remote TFT displays
 - Optional remote LED status lighting
 - Optional TCP audio announcements
+- Optional radar API area selection from the Display page
 - Optional Google Air Quality data on idle TFT clock screens
 - Runtime statistics and raw NWS JSON viewing
 
@@ -249,7 +250,20 @@ Weather area 2. NC F. Severe Thunderstorm Warning
 
 Use the Audio checkbox on the Config page to enable or disable announcements for individual zones.
 
-## 9. Air Quality
+## 9. Radar API
+
+Radar output is optional. Configure the destination with:
+
+```json
+{
+  "radar_ip": "192.168.1.90",
+  "radar_port": 8081
+}
+```
+
+On the Display page, use the Radar dropdown on an area row and choose zoom `6`, `7`, `8`, or `9` to center the radar map. Latitude/longitude areas are sent as `lat=<area latitude> lon=<area longitude> zoom=<zoom>`. NWS zone/county and SAME areas are sent as `same=<assigned code> zoom=<zoom>`.
+
+## 10. Air Quality
 
 Air quality is optional and appears on idle TFT clock screens. Set a Google Air Quality API key:
 
@@ -263,7 +277,7 @@ Air quality is optional and appears on idle TFT clock screens. Set a Google Air 
 
 If explicit coordinates are not configured, the app uses the first active latitude/longitude alert area. The default air-quality refresh interval is 3600 seconds.
 
-## 10. Command-Line Options
+## 11. Command-Line Options
 
 View every available option:
 
@@ -292,13 +306,14 @@ Common options:
 | `--led-host`, `--led-port` | LED controller connection | Disabled / `7777` |
 | `--tft-host`, `--tft-port` | TFT connection | Disabled / `8888` |
 | `--audio-host`, `--audio-port` | Audio TCP connection | Disabled |
+| `--radar-ip`, `--radar-port` | Radar API connection | Disabled |
 | `--log-level` | Python logging level | `INFO` |
 
 Settings-file keys match the long command-line option names without leading dashes. Use underscores or hyphens, for example `alert_cycle_seconds` or `alert-cycle-seconds`.
 
 Command-line values override settings-file values for that run.
 
-## 11. Security and Network Access
+## 12. Security and Network Access
 
 The default bind address, `0.0.0.0`, makes the web interface available through every network interface on the computer. The interface has no login or access control.
 
@@ -310,7 +325,7 @@ python python-walert.py --bind 127.0.0.1
 
 Do not expose the app directly to the public internet. Use firewall restrictions or an authenticated reverse proxy if access beyond a trusted local network is required.
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 ### The web page does not open
 
@@ -337,7 +352,7 @@ Do not expose the app directly to the public internet. Use firewall restrictions
 
 Running changes are not automatically saved. Select **Save Current Zones** after editing the configuration.
 
-### LED, TFT, or audio output is missing
+### LED, TFT, audio, or radar output is missing
 
 - Confirm the relevant host and port were set before startup.
 - Confirm the remote device is reachable from the WeatherAlert computer.
@@ -349,7 +364,7 @@ Running changes are not automatically saved. Select **Save Current Zones** after
 
 It may have been acknowledged. Acknowledged alerts remain visible on the web page but are suppressed from TFT and LED output. Restarting the application clears in-memory acknowledgements.
 
-## 13. Files Created by the App
+## 14. Files Created by the App
 
 | File | Purpose |
 |---|---|

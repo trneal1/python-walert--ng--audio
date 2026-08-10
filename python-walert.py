@@ -114,6 +114,9 @@ AUDIO_HOST = ""
 AUDIO_PORT = 0
 AUDIO_TIMEOUT = 2.0
 
+RADAR_IP = ""
+RADAR_PORT = 0
+
 LOG_LEVEL = "INFO"
 LOG = logging.getLogger("weatheralert")
 
@@ -159,6 +162,7 @@ button.badge{font-family:inherit;cursor:pointer}
 .sev-advisory{background:#22c55e22;color:#22c55e;border:1px solid #22c55e}
 .code-0{color:var(--magenta);font-weight:700;font-family:monospace}
 .code-n{color:var(--green);font-weight:700;font-family:monospace}
+.radar-select{min-width:74px;padding:4px 8px;font-size:12px}
 .exp{color:var(--text-muted);font-size:12px;font-family:monospace}
 .err{color:var(--orange);font-style:italic}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px}
@@ -573,6 +577,7 @@ class AppState:
         self.tft = RemoteTFT("TFT", TFT_HOST, TFT_PORT, TFT_DISPLAY, TFT_ROTATION, TFT_TIMEOUT)
         self.leds = RemoteLEDController(LED_HOST, LED_PORT, LED_TIMEOUT)
         self.audio = RemoteAudioClock(AUDIO_HOST, AUDIO_PORT, AUDIO_TIMEOUT)
+        self.radar = RemoteRadarApi(RADAR_IP, RADAR_PORT, NWS_TIMEOUT)
         self.leds.clear_all()
         self.tft.connect_if_configured()
         self._render_boot()
@@ -888,6 +893,48 @@ class RemoteAudioClock:
                 self.last_error = str(exc)
                 self.connected = False
                 LOG.warning("Audio write failed: %s", exc)
+                return False
+
+
+class RemoteRadarApi:
+    """Sends selected display areas to a radar API over TCP."""
+
+    def __init__(self, ip: str, port: int, timeout: float) -> None:
+        self.ip = ip
+        self.port = port
+        self.timeout = timeout
+        self.configured = bool(ip and port > 0)
+        self.lock = threading.RLock()
+        self.last_error = ""
+        self.connected = False
+        if not self.configured:
+            LOG.info("Radar API disabled: RADAR_IP/RADAR_PORT are unset")
+
+    def send_area(self, zone: Zone, zoom: int | None = None) -> bool:
+        if not self.configured:
+            return False
+        command = radar_command_for_zone(zone, zoom)
+        if not command:
+            LOG.warning("Radar API command skipped for unsupported area: %s", zone.id)
+            return False
+        data = (command + "\n").encode("utf-8")
+        with self.lock:
+            try:
+                with socket.create_connection((self.ip, self.port), timeout=self.timeout) as sock:
+                    sock.settimeout(self.timeout)
+                    try:
+                        sock.recv(512)
+                    except socket.timeout:
+                        pass
+                    sock.sendall(data)
+                self.connected = True
+                self.last_error = ""
+                LOG.info("Radar API selected %s with %s", zone.code, command)
+                return True
+            except OSError as exc:
+                self.last_error = str(exc)
+                self.connected = False
+                LOG.warning("Radar API command failed: %s", exc)
                 return False
 
 
@@ -1483,12 +1530,14 @@ def display_rows_from_results(zones: list[Zone], results: list[ZoneResult], ackn
     rows: list[str] = []
     current_group: int | None | object = object()
     for idx, zone in display_zone_order(zones):
+        area_cell = display_area_label_cell(zone, idx)
+        radar_cell = radar_zoom_cell(idx)
         if zone.led_group != current_group:
             current_group = zone.led_group
             rows.append(weather_group_header_html(zone.led_group))
         if not zone.active:
             rows.append(
-                f"<tr style='opacity:0.45'><td class='code-n'>{safe(zone.code)}</td>"
+                f"<tr style='opacity:0.45'>{area_cell}{radar_cell}"
                 "<td colspan='5' style='color:var(--text-muted);font-style:italic'>"
                 "Monitoring disabled - enable in Config</td></tr>"
             )
@@ -1496,19 +1545,19 @@ def display_rows_from_results(zones: list[Zone], results: list[ZoneResult], ackn
         result = results[idx] if idx < len(results) else ZoneResult()
         if result.fetch_error:
             rows.append(
-                f"<tr><td class='code-n'>{safe(zone.code)}</td>"
+                f"<tr>{area_cell}{radar_cell}"
                 f"<td colspan='5' class='err'>{safe(result.fetch_error)}</td></tr>"
             )
             continue
         if not result.fetched:
             rows.append(
-                f"<tr><td class='code-n'>{safe(zone.code)}</td>"
+                f"<tr>{area_cell}{radar_cell}"
                 "<td colspan='5' style='color:var(--text-muted);font-style:italic'>Pending fetch</td></tr>"
             )
             continue
         if not result.alerts:
             rows.append(
-                f"<tr><td class='code-n'>{safe(zone.code)}</td>"
+                f"<tr>{area_cell}{radar_cell}"
                 "<td colspan='5' style='color:var(--text-muted);font-style:italic'>No active alerts</td></tr>"
             )
             continue
@@ -1519,9 +1568,36 @@ def display_rows_from_results(zones: list[Zone], results: list[ZoneResult], ackn
 
 def weather_group_header_html(group: int | None) -> str:
     return (
-        "<tr class='weather-group-hdr'><td colspan='6'>"
+        "<tr class='weather-group-hdr'><td colspan='7'>"
         f"Weather Group {safe(weather_group_label(group))}"
         "</td></tr>"
+    )
+
+
+def radar_command_for_zone(zone: Zone, zoom: int | None = None) -> str:
+    zoom_part = f" zoom={zoom}" if zoom is not None else ""
+    if zone.type == "latlon":
+        if not zone.lat or not zone.lon:
+            return ""
+        return f"lat={quote(zone.lat)} lon={quote(zone.lon)}{zoom_part}"
+    return f"same={quote(zone.id)}{zoom_part}"
+
+
+def display_area_label_cell(zone: Zone, idx: int) -> str:
+    cls = "code-0" if idx == 0 else "code-n"
+    label = safe(zone.code) or "&nbsp;"
+    return f"<td class='{cls}'>{label}</td>"
+
+
+def radar_zoom_cell(idx: int) -> str:
+    options = "".join(f"<option value='{zoom}'>{zoom}</option>" for zoom in (6, 7, 8, 9))
+    return (
+        "<td><form method='POST' action='/radar/select' style='display:inline'>"
+        f"<input type='hidden' name='idx' value='{idx}'>"
+        "<select name='zoom' class='radar-select' onchange='this.form.submit()' title='Center radar map'>"
+        "<option value='' selected>Radar</option>"
+        f"{options}"
+        "</select></form></td>"
     )
 
 
@@ -1539,7 +1615,8 @@ def display_alert_row(zone: Zone, idx: int, alert: dict[str, str], acknowledged:
     detail_href = f"/desc#{alert_detail_id(zone, alert)}"
     return (
         "<tr>"
-        f"<td class='{'code-0' if idx == 0 else 'code-n'}'>{safe(zone.code)}</td>"
+        f"{display_area_label_cell(zone, idx)}"
+        f"{radar_zoom_cell(idx)}"
         "<td><form method='POST' action='/alert/ack' style='display:inline'>"
         f"<input type='hidden' name='key' value='{safe(ack_key)}'>"
         f"<button type='submit' class='badge {sev_class}{ack_class}' title='{safe(ack_title)}'>{safe(event) or '&nbsp;'}</button>"
@@ -2116,7 +2193,7 @@ def build_display_page(zones: list[Zone], rows: list[str]) -> str:
     else:
         content = (
             "<div class='card'><table class='alert-table'><thead><tr>"
-            "<th>Zone</th><th>Alert</th><th>Issued (Local)</th><th>Type</th><th>Expires (Local)</th><th>Detail</th>"
+            "<th>Zone</th><th>Radar</th><th>Alert</th><th>Issued (Local)</th><th>Type</th><th>Expires (Local)</th><th>Detail</th>"
             "</tr></thead><tbody>"
             + "".join(rows)
             + "</tbody></table></div>"
@@ -2630,6 +2707,9 @@ class WeatherAlertHandler(BaseHTTPRequestHandler):
         if path == "/alert/ack":
             redirect(self, acknowledge_alert(form))
             return
+        if path == "/radar/select":
+            redirect(self, select_radar_area(form))
+            return
         self.send_text("Not found", status=404)
 
     def handle_area(self, query: dict[str, list[str]]) -> None:
@@ -2767,6 +2847,21 @@ def acknowledge_alert(form: dict[str, str]) -> str:
     return "/display"
 
 
+def select_radar_area(form: dict[str, str]) -> str:
+    try:
+        idx = int(form.get("idx", ""))
+        zoom = int(form.get("zoom", ""))
+    except ValueError:
+        return "/display"
+    if zoom not in {6, 7, 8, 9}:
+        return "/display"
+    zones = STATE.zones_snapshot()
+    if idx < 0 or idx >= len(zones):
+        return "/display"
+    STATE.radar.send_area(zones[idx], zoom)
+    return "/display"
+
+
 def delete_zone(form: dict[str, str]) -> str:
     idx = parse_idx(form)
     with STATE.lock:
@@ -2872,6 +2967,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audio-host", default=AUDIO_HOST, help="Audio announcement TCP host.")
     parser.add_argument("--audio-port", type=int, default=AUDIO_PORT, help="Audio announcement TCP port.")
     parser.add_argument("--audio-timeout", type=float, default=AUDIO_TIMEOUT, help="Audio announcement TCP timeout in seconds.")
+    parser.add_argument("--radar-ip", default=RADAR_IP, help="Radar API IP address.")
+    parser.add_argument("--radar-port", type=int, default=RADAR_PORT, help="Radar API TCP port.")
     parser.add_argument("--log-level", default=LOG_LEVEL, help="Python log level.")
     return parser
 
@@ -2901,6 +2998,8 @@ SETTING_FIELDS: dict[str, tuple[str, Any]] = {
     "audio_host": ("AUDIO_HOST", str),
     "audio_port": ("AUDIO_PORT", int),
     "audio_timeout": ("AUDIO_TIMEOUT", float),
+    "radar_ip": ("RADAR_IP", str),
+    "radar_port": ("RADAR_PORT", int),
     "log_level": ("LOG_LEVEL", str),
 }
 
@@ -2944,6 +3043,7 @@ def apply_cli_config(argv: list[str] | None = None) -> None:
     global TFT_HOST, TFT_PORT, TFT_DISPLAY, TFT_ROTATION, TFT_TIMEOUT, LOG_LEVEL
     global LED_HOST, LED_PORT, LED_TIMEOUT
     global AUDIO_HOST, AUDIO_PORT, AUDIO_TIMEOUT
+    global RADAR_IP, RADAR_PORT
 
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--settings", type=Path, default=SETTINGS_PATH)
@@ -2980,6 +3080,8 @@ def apply_cli_config(argv: list[str] | None = None) -> None:
     AUDIO_HOST = args.audio_host
     AUDIO_PORT = args.audio_port
     AUDIO_TIMEOUT = args.audio_timeout
+    RADAR_IP = args.radar_ip
+    RADAR_PORT = args.radar_port
     LOG_LEVEL = str(args.log_level).upper()
 
     logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(message)s", force=True)
