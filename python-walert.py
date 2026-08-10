@@ -114,7 +114,7 @@ AUDIO_HOST = ""
 AUDIO_PORT = 0
 AUDIO_TIMEOUT = 2.0
 
-RADAR_IP = ""
+RADAR_HOST = ""
 RADAR_PORT = 0
 
 LOG_LEVEL = "INFO"
@@ -577,7 +577,7 @@ class AppState:
         self.tft = RemoteTFT("TFT", TFT_HOST, TFT_PORT, TFT_DISPLAY, TFT_ROTATION, TFT_TIMEOUT)
         self.leds = RemoteLEDController(LED_HOST, LED_PORT, LED_TIMEOUT)
         self.audio = RemoteAudioClock(AUDIO_HOST, AUDIO_PORT, AUDIO_TIMEOUT)
-        self.radar = RemoteRadarApi(RADAR_IP, RADAR_PORT, NWS_TIMEOUT)
+        self.radar = RemoteRadarApi(RADAR_HOST, RADAR_PORT, NWS_TIMEOUT)
         self.leds.clear_all()
         self.tft.connect_if_configured()
         self._render_boot()
@@ -899,16 +899,16 @@ class RemoteAudioClock:
 class RemoteRadarApi:
     """Sends selected display areas to a radar API over TCP."""
 
-    def __init__(self, ip: str, port: int, timeout: float) -> None:
-        self.ip = ip
+    def __init__(self, host: str, port: int, timeout: float) -> None:
+        self.host = host
         self.port = port
         self.timeout = timeout
-        self.configured = bool(ip and port > 0)
+        self.configured = bool(host and port > 0)
         self.lock = threading.RLock()
         self.last_error = ""
         self.connected = False
         if not self.configured:
-            LOG.info("Radar API disabled: RADAR_IP/RADAR_PORT are unset")
+            LOG.info("Radar API disabled: RADAR_HOST/RADAR_PORT are unset")
 
     def send_area(self, zone: Zone, zoom: int | None = None) -> bool:
         if not self.configured:
@@ -920,7 +920,7 @@ class RemoteRadarApi:
         data = (command + "\n").encode("utf-8")
         with self.lock:
             try:
-                with socket.create_connection((self.ip, self.port), timeout=self.timeout) as sock:
+                with socket.create_connection((self.host, self.port), timeout=self.timeout) as sock:
                     sock.settimeout(self.timeout)
                     try:
                         sock.recv(512)
@@ -2967,7 +2967,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audio-host", default=AUDIO_HOST, help="Audio announcement TCP host.")
     parser.add_argument("--audio-port", type=int, default=AUDIO_PORT, help="Audio announcement TCP port.")
     parser.add_argument("--audio-timeout", type=float, default=AUDIO_TIMEOUT, help="Audio announcement TCP timeout in seconds.")
-    parser.add_argument("--radar-ip", default=RADAR_IP, help="Radar API IP address.")
+    parser.add_argument("--radar-host", default=RADAR_HOST, help="Radar API host.")
+    parser.add_argument("--radar-ip", dest="radar_host", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     parser.add_argument("--radar-port", type=int, default=RADAR_PORT, help="Radar API TCP port.")
     parser.add_argument("--log-level", default=LOG_LEVEL, help="Python log level.")
     return parser
@@ -2998,7 +2999,8 @@ SETTING_FIELDS: dict[str, tuple[str, Any]] = {
     "audio_host": ("AUDIO_HOST", str),
     "audio_port": ("AUDIO_PORT", int),
     "audio_timeout": ("AUDIO_TIMEOUT", float),
-    "radar_ip": ("RADAR_IP", str),
+    "radar_host": ("RADAR_HOST", str),
+    "radar_ip": ("RADAR_HOST", str),
     "radar_port": ("RADAR_PORT", int),
     "log_level": ("LOG_LEVEL", str),
 }
@@ -3043,7 +3045,7 @@ def apply_cli_config(argv: list[str] | None = None) -> None:
     global TFT_HOST, TFT_PORT, TFT_DISPLAY, TFT_ROTATION, TFT_TIMEOUT, LOG_LEVEL
     global LED_HOST, LED_PORT, LED_TIMEOUT
     global AUDIO_HOST, AUDIO_PORT, AUDIO_TIMEOUT
-    global RADAR_IP, RADAR_PORT
+    global RADAR_HOST, RADAR_PORT
 
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--settings", type=Path, default=SETTINGS_PATH)
@@ -3080,7 +3082,7 @@ def apply_cli_config(argv: list[str] | None = None) -> None:
     AUDIO_HOST = args.audio_host
     AUDIO_PORT = args.audio_port
     AUDIO_TIMEOUT = args.audio_timeout
-    RADAR_IP = args.radar_ip
+    RADAR_HOST = args.radar_host
     RADAR_PORT = args.radar_port
     LOG_LEVEL = str(args.log_level).upper()
 

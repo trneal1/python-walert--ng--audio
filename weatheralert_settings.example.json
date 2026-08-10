@@ -17,7 +17,7 @@
   "audio_host": "",
   "audio_port": 0,
   "audio_timeout": 2.0,
-  "radar_ip": "",
+  "radar_host": "",
   "radar_port": 0,
   "google_air_quality_api_key": "",
   "air_quality_lat": "",

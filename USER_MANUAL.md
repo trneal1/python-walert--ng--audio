@@ -256,7 +256,7 @@ Radar output is optional. Configure the destination with:
 
 ```json
 {
-  "radar_ip": "192.168.1.90",
+  "radar_host": "192.168.1.90",
   "radar_port": 8081
 }
 ```
@@ -306,7 +306,7 @@ Common options:
 | `--led-host`, `--led-port` | LED controller connection | Disabled / `7777` |
 | `--tft-host`, `--tft-port` | TFT connection | Disabled / `8888` |
 | `--audio-host`, `--audio-port` | Audio TCP connection | Disabled |
-| `--radar-ip`, `--radar-port` | Radar API connection | Disabled |
+| `--radar-host`, `--radar-port` | Radar API connection | Disabled |
 | `--log-level` | Python logging level | `INFO` |
 
 Settings-file keys match the long command-line option names without leading dashes. Use underscores or hyphens, for example `alert_cycle_seconds` or `alert-cycle-seconds`.
