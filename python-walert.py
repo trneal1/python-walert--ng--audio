@@ -162,7 +162,9 @@ button.badge{font-family:inherit;cursor:pointer}
 .sev-advisory{background:#22c55e22;color:#22c55e;border:1px solid #22c55e}
 .code-0{color:var(--magenta);font-weight:700;font-family:monospace}
 .code-n{color:var(--green);font-weight:700;font-family:monospace}
-.radar-select{min-width:74px;padding:4px 8px;font-size:12px}
+.radar-controls{display:inline-flex;align-items:stretch}
+.radar-button{padding:4px 8px;font-size:12px;border-top-right-radius:0;border-bottom-right-radius:0}
+.radar-select{width:42px;padding:4px 2px;font-size:12px;border-left:0;border-top-left-radius:0;border-bottom-left-radius:0}
 .exp{color:var(--text-muted);font-size:12px;font-family:monospace}
 .err{color:var(--orange);font-style:italic}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px}
@@ -561,6 +563,7 @@ class AppState:
         self.saved_at = ""
         self.zones = self._load_config_or_defaults()
         self.results: list[ZoneResult] = [ZoneResult() for _ in self.zones]
+        self.radar_zooms: list[int] = [7 for _ in self.zones]
         self.acknowledged_alerts: set[str] = set()
         self.acknowledged_generation = 0
         self.display_page = self._display_placeholder()
@@ -658,6 +661,7 @@ class AppState:
         with self.lock:
             self.zones = zones
             self.results = [ZoneResult() for _ in zones]
+            self.radar_zooms = [7 for _ in zones]
             self.saved_at = str(data.get("saved_at", self.saved_at))
         refresh_leds_from_cached_results(self)
         self.notify_reload()
@@ -674,6 +678,25 @@ class AppState:
     def zones_snapshot(self) -> list[Zone]:
         with self.lock:
             return [Zone(**asdict(z)) for z in self.zones]
+
+    def radar_zoom_for_idx(self, idx: int) -> int:
+        with self.lock:
+            if idx < 0 or idx >= len(self.zones):
+                return 7
+            if len(self.radar_zooms) < len(self.zones):
+                self.radar_zooms.extend([7] * (len(self.zones) - len(self.radar_zooms)))
+            zoom = self.radar_zooms[idx] if idx < len(self.radar_zooms) else 7
+            return zoom if zoom in {6, 7, 8, 9} else 7
+
+    def set_radar_zoom_for_idx(self, idx: int, zoom: int) -> None:
+        if zoom not in {6, 7, 8, 9}:
+            return
+        with self.lock:
+            if idx < 0 or idx >= len(self.zones):
+                return
+            if len(self.radar_zooms) < len(self.zones):
+                self.radar_zooms.extend([7] * (len(self.zones) - len(self.radar_zooms)))
+            self.radar_zooms[idx] = zoom
 
     def result_snapshot(self) -> list[ZoneResult]:
         with self.lock:
@@ -1561,8 +1584,8 @@ def display_rows_from_results(zones: list[Zone], results: list[ZoneResult], ackn
                 "<td colspan='5' style='color:var(--text-muted);font-style:italic'>No active alerts</td></tr>"
             )
             continue
-        for alert in result.alerts:
-            rows.append(display_alert_row(zone, idx, alert, acknowledged))
+        for alert_idx, alert in enumerate(result.alerts):
+            rows.append(display_alert_row(zone, idx, alert, acknowledged, show_area_controls=alert_idx == 0))
     return rows
 
 
@@ -1590,18 +1613,24 @@ def display_area_label_cell(zone: Zone, idx: int) -> str:
 
 
 def radar_zoom_cell(idx: int) -> str:
-    options = "".join(f"<option value='{zoom}'>{zoom}</option>" for zoom in (6, 7, 8, 9))
+    current_zoom = STATE.radar_zoom_for_idx(idx)
+    options = "".join(
+        f"<option value='{zoom}'{' selected' if zoom == current_zoom else ''}>{zoom}</option>"
+        for zoom in (6, 7, 8, 9)
+    )
     return (
-        "<td><form method='POST' action='/radar/select' style='display:inline'>"
+        "<td><form method='POST' action='/radar/select' class='radar-controls'>"
         f"<input type='hidden' name='idx' value='{idx}'>"
-        "<select name='zoom' class='radar-select' onchange='this.form.submit()' title='Center radar map'>"
-        "<option value='' selected>Radar</option>"
+        f"<button type='submit' class='btn btn-secondary btn-sm radar-button' title='Center radar map at zoom {current_zoom}'>Radar</button>"
+        "<select name='zoom' class='radar-select' onchange='this.form.submit()' title='Radar zoom'>"
         f"{options}"
         "</select></form></td>"
     )
 
 
-def display_alert_row(zone: Zone, idx: int, alert: dict[str, str], acknowledged: set[str]) -> str:
+def display_alert_row(
+    zone: Zone, idx: int, alert: dict[str, str], acknowledged: set[str], show_area_controls: bool = True
+) -> str:
     event = alert.get("event", "")
     issued = short_alert_time(alert.get("sent", "") or alert.get("effective", ""))
     expires = short_expiry(alert.get("expires", ""))
@@ -1613,10 +1642,14 @@ def display_alert_row(zone: Zone, idx: int, alert: dict[str, str], acknowledged:
     ack_class = " badge-ack" if acked else ""
     ack_title = "Acknowledged - click again to keep acknowledged" if acked else "Acknowledge this alert"
     detail_href = f"/desc#{alert_detail_id(zone, alert)}"
+    area_cells = (
+        f"{display_area_label_cell(zone, idx)}{radar_zoom_cell(idx)}"
+        if show_area_controls
+        else "<td>&nbsp;</td><td>&nbsp;</td>"
+    )
     return (
         "<tr>"
-        f"{display_area_label_cell(zone, idx)}"
-        f"{radar_zoom_cell(idx)}"
+        f"{area_cells}"
         "<td><form method='POST' action='/alert/ack' style='display:inline'>"
         f"<input type='hidden' name='key' value='{safe(ack_key)}'>"
         f"<button type='submit' class='badge {sev_class}{ack_class}' title='{safe(ack_title)}'>{safe(event) or '&nbsp;'}</button>"
@@ -2788,6 +2821,7 @@ def add_same_zone(form: dict[str, str]) -> str:
             )
         )
         STATE.results.append(ZoneResult())
+        STATE.radar_zooms.append(7)
     refresh_leds_from_cached_results(STATE)
     STATE.notify_reload()
     return "/config?added"
@@ -2824,6 +2858,7 @@ def add_latlon_zone(form: dict[str, str]) -> str:
             )
         )
         STATE.results.append(ZoneResult())
+        STATE.radar_zooms.append(7)
     refresh_leds_from_cached_results(STATE)
     STATE.notify_reload()
     return "/config?added"
@@ -2850,15 +2885,26 @@ def acknowledge_alert(form: dict[str, str]) -> str:
 def select_radar_area(form: dict[str, str]) -> str:
     try:
         idx = int(form.get("idx", ""))
-        zoom = int(form.get("zoom", ""))
     except ValueError:
         return "/display"
+
+    zoom_text = form.get("zoom", "")
+    if zoom_text:
+        try:
+            zoom = int(zoom_text)
+        except ValueError:
+            return "/display"
+    else:
+        zoom = STATE.radar_zoom_for_idx(idx)
+
     if zoom not in {6, 7, 8, 9}:
         return "/display"
     zones = STATE.zones_snapshot()
     if idx < 0 or idx >= len(zones):
         return "/display"
+    STATE.set_radar_zoom_for_idx(idx, zoom)
     STATE.radar.send_area(zones[idx], zoom)
+    refresh_display_from_cached_results(STATE)
     return "/display"
 
 
@@ -2870,6 +2916,8 @@ def delete_zone(form: dict[str, str]) -> str:
         STATE.zones.pop(idx)
         if idx < len(STATE.results):
             STATE.results.pop(idx)
+        if idx < len(STATE.radar_zooms):
+            STATE.radar_zooms.pop(idx)
     refresh_leds_from_cached_results(STATE)
     STATE.notify_reload()
     return "/config?deleted"
@@ -2933,6 +2981,8 @@ def move_zone(form: dict[str, str]) -> str:
         STATE.zones[idx], STATE.zones[target] = STATE.zones[target], STATE.zones[idx]
         if idx < len(STATE.results) and target < len(STATE.results):
             STATE.results[idx], STATE.results[target] = STATE.results[target], STATE.results[idx]
+        if idx < len(STATE.radar_zooms) and target < len(STATE.radar_zooms):
+            STATE.radar_zooms[idx], STATE.radar_zooms[target] = STATE.radar_zooms[target], STATE.radar_zooms[idx]
     refresh_leds_from_cached_results(STATE)
     STATE.notify_reload()
     return "/config?moved"

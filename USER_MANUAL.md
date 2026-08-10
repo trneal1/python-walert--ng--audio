@@ -261,7 +261,7 @@ Radar output is optional. Configure the destination with:
 }
 ```
 
-On the Display page, use the Radar dropdown on an area row and choose zoom `6`, `7`, `8`, or `9` to center the radar map. Latitude/longitude areas are sent as `lat=<area latitude> lon=<area longitude> zoom=<zoom>`. NWS zone/county and SAME areas are sent as `same=<assigned code> zoom=<zoom>`.
+On the Display page, each area row starts with zoom `7`. Click the Radar button on a row to center the radar map using that row's current zoom. Use the zoom selector beside it to choose zoom `6`, `7`, `8`, or `9`; only that row's zoom changes, and the new zoom is sent immediately. Latitude/longitude areas are sent as `lat=<area latitude> lon=<area longitude> zoom=<zoom>`. NWS zone/county and SAME areas are sent as `same=<assigned code> zoom=<zoom>`.
 
 ## 10. Air Quality
 
