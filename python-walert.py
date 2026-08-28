@@ -115,7 +115,8 @@ AUDIO_PORT = 0
 AUDIO_TIMEOUT = 2.0
 
 RADAR_HOST = ""
-RADAR_PORT = 0
+RADAR_API_PORT = 0
+RADAR_IMAGE_PORT = 0
 
 LOG_LEVEL = "INFO"
 LOG = logging.getLogger("weatheralert")
@@ -162,6 +163,17 @@ button.badge{font-family:inherit;cursor:pointer}
 .sev-advisory{background:#22c55e22;color:#22c55e;border:1px solid #22c55e}
 .code-0{color:var(--magenta);font-weight:700;font-family:monospace}
 .code-n{color:var(--green);font-weight:700;font-family:monospace}
+.radar-popup{position:fixed;left:50%;top:88px;z-index:1000;width:min(920px,calc(100vw - 32px));height:min(620px,calc(100vh - 104px));min-width:320px;min-height:260px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);background:#050505;border:1px solid var(--border);border-radius:8px;box-shadow:0 18px 70px #000c;overflow:hidden;resize:none;display:none;flex-direction:column}
+.radar-popup.open{display:flex}
+.radar-popup-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px 8px 12px;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px;cursor:move;user-select:none;touch-action:none}
+.radar-popup-status{font-family:monospace;text-transform:none;letter-spacing:0;color:var(--text-muted)}
+.radar-popup-actions{display:flex;align-items:center;gap:10px;margin-left:auto}
+.radar-popup-close{inline-size:28px;block-size:28px;border:1px solid var(--border);border-radius:5px;background:#1e1e1e;color:var(--text);font-size:18px;line-height:1;cursor:pointer}
+.radar-popup-close:hover{border-color:var(--accent);color:var(--accent)}
+.radar-image-wrap{display:flex;align-items:center;justify-content:center;background:#000;min-height:0;overflow:hidden;flex:1}
+.radar-image{display:block;width:100%;height:100%;object-fit:contain;background:#000}
+.radar-popup-resize{position:absolute;right:0;bottom:0;inline-size:18px;block-size:18px;cursor:nwse-resize;touch-action:none}
+.radar-popup-resize:after{content:"";position:absolute;right:4px;bottom:4px;inline-size:8px;block-size:8px;border-right:2px solid var(--text-muted);border-bottom:2px solid var(--text-muted);opacity:.75}
 .radar-controls{display:inline-flex;align-items:stretch}
 .radar-button{padding:4px 8px;font-size:12px;border-top-right-radius:0;border-bottom-right-radius:0}
 .radar-select{width:42px;padding:4px 2px;font-size:12px;border-left:0;border-top-left-radius:0;border-bottom-left-radius:0}
@@ -217,6 +229,217 @@ SSE_SCRIPT = """
   var es = new EventSource('/events');
   es.addEventListener('reload', function(){ es.close(); location.reload(); });
   es.onerror = function(){ setTimeout(function(){ location.reload(); }, 5000); };
+})();
+</script>
+"""
+
+RADAR_POPUP_SCRIPT = """
+<script>
+(function(){
+function initRadarPopup(){
+  var popup = document.getElementById('radar-popup');
+  var link = document.getElementById('radar-menu-link');
+  if (!popup || !link) return;
+  var img = document.getElementById('radar-live-image');
+  var status = document.getElementById('radar-live-status');
+  var close = document.getElementById('radar-popup-close');
+  var header = document.getElementById('radar-popup-header');
+  var resizeHandle = document.getElementById('radar-popup-resize');
+  var base = img ? img.getAttribute('data-src') : '/radar/image';
+  var refreshMs = 5000;
+  var refreshTimer = 0;
+  var positioned = false;
+  var currentPopupSize = null;
+  var preservingPopupSize = false;
+  var storagePrefix = 'weatheralertRadarPopup.';
+  function resetPopupSize() {
+    popup.style.width = '';
+    popup.style.height = '';
+    currentPopupSize = null;
+    sessionStorage.removeItem(storagePrefix + 'width');
+    sessionStorage.removeItem(storagePrefix + 'height');
+  }
+  function savedPopupSize() {
+    var width = parseFloat(sessionStorage.getItem(storagePrefix + 'width') || '');
+    var height = parseFloat(sessionStorage.getItem(storagePrefix + 'height') || '');
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+    return { width: width, height: height };
+  }
+  function savePopupSize(size) {
+    if (!size) return;
+    sessionStorage.setItem(storagePrefix + 'width', size.width + 'px');
+    sessionStorage.setItem(storagePrefix + 'height', size.height + 'px');
+  }
+  function stamp(url) {
+    return url + (url.indexOf('?') === -1 ? '?' : '&') + 't=' + Date.now();
+  }
+  function rememberCurrentPopupSize() {
+    if (!popup.classList.contains('open') || preservingPopupSize) return;
+    var rect = popup.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    currentPopupSize = { width: rect.width, height: rect.height };
+    savePopupSize(currentPopupSize);
+  }
+  function applyPopupSize(size) {
+    if (!size) return;
+    popup.style.width = size.width + 'px';
+    popup.style.height = size.height + 'px';
+    currentPopupSize = size;
+    savePopupSize(size);
+  }
+  function constrainedAspectSize(startWidth, startHeight, deltaX, deltaY) {
+    var ratio = startWidth / startHeight;
+    var minWidth = 320;
+    var minHeight = 260;
+    var maxWidth = Math.max(minWidth, window.innerWidth - 16);
+    var maxHeight = Math.max(minHeight, window.innerHeight - 16);
+    var widthFromX = startWidth + deltaX;
+    var widthFromY = (startHeight + deltaY) * ratio;
+    var nextWidth = Math.max(widthFromX, widthFromY);
+    var minRatioWidth = Math.max(minWidth, minHeight * ratio);
+    var maxRatioWidth = Math.min(maxWidth, maxHeight * ratio);
+    nextWidth = Math.min(Math.max(minRatioWidth, nextWidth), Math.max(minRatioWidth, maxRatioWidth));
+    return { width: nextWidth, height: nextWidth / ratio };
+  }
+  function refreshRadarImage() {
+    if (!img || !popup.classList.contains('open')) return;
+    rememberCurrentPopupSize();
+    var preservedSize = currentPopupSize;
+    preservingPopupSize = true;
+    applyPopupSize(preservedSize);
+    var next = new Image();
+    next.onload = function(){
+      applyPopupSize(preservedSize);
+      img.src = next.src;
+      requestAnimationFrame(function(){
+        applyPopupSize(preservedSize);
+        preservingPopupSize = false;
+        currentPopupSize = preservedSize;
+      });
+      if (status) status.textContent = 'updated ' + new Date().toLocaleTimeString();
+    };
+    next.onerror = function(){
+      preservingPopupSize = false;
+      if (status) status.textContent = 'radar image unavailable';
+    };
+    next.src = stamp(base);
+  }
+  function centerPopup() {
+    if (positioned) return;
+    var savedLeft = sessionStorage.getItem(storagePrefix + 'left');
+    var savedTop = sessionStorage.getItem(storagePrefix + 'top');
+    if (savedLeft && savedTop) {
+      popup.style.left = savedLeft;
+      popup.style.top = savedTop;
+      popup.style.transform = 'none';
+      positioned = true;
+      return;
+    }
+    var rect = popup.getBoundingClientRect();
+    popup.style.left = Math.max(16, (window.innerWidth - rect.width) / 2) + 'px';
+    popup.style.top = '88px';
+    popup.style.transform = 'none';
+    positioned = true;
+  }
+  function openPopup(event, options) {
+    if (event) event.preventDefault();
+    if (popup.classList.contains('open')) {
+      refreshRadarImage();
+      return;
+    }
+    if (options && options.restoreSize) {
+      currentPopupSize = savedPopupSize();
+    } else {
+      resetPopupSize();
+    }
+    popup.classList.add('open');
+    applyPopupSize(currentPopupSize);
+    sessionStorage.setItem(storagePrefix + 'open', '1');
+    centerPopup();
+    rememberCurrentPopupSize();
+    refreshRadarImage();
+    if (!refreshTimer) refreshTimer = setInterval(refreshRadarImage, refreshMs);
+  }
+  function closePopup() {
+    popup.classList.remove('open');
+    sessionStorage.removeItem(storagePrefix + 'open');
+    resetPopupSize();
+    if (refreshTimer) {
+      clearInterval(refreshTimer);
+      refreshTimer = 0;
+    }
+  }
+  link.addEventListener('click', openPopup);
+  if (close) close.addEventListener('click', closePopup);
+  document.addEventListener('keydown', function(event){
+    if (event.key === 'Escape') closePopup();
+  });
+  if (header) {
+    header.addEventListener('pointerdown', function(event){
+      if (event.target && event.target.closest && event.target.closest('button')) return;
+      popup.setPointerCapture(event.pointerId);
+      var startX = event.clientX;
+      var startY = event.clientY;
+      var rect = popup.getBoundingClientRect();
+      function move(moveEvent) {
+        var nextLeft = rect.left + moveEvent.clientX - startX;
+        var nextTop = rect.top + moveEvent.clientY - startY;
+        popup.style.left = Math.min(Math.max(8, nextLeft), window.innerWidth - 48) + 'px';
+        popup.style.top = Math.min(Math.max(8, nextTop), window.innerHeight - 48) + 'px';
+        popup.style.transform = 'none';
+        sessionStorage.setItem(storagePrefix + 'left', popup.style.left);
+        sessionStorage.setItem(storagePrefix + 'top', popup.style.top);
+      }
+      function up(upEvent) {
+        popup.releasePointerCapture(upEvent.pointerId);
+        sessionStorage.setItem(storagePrefix + 'left', popup.style.left);
+        sessionStorage.setItem(storagePrefix + 'top', popup.style.top);
+        popup.removeEventListener('pointermove', move);
+        popup.removeEventListener('pointerup', up);
+        popup.removeEventListener('pointercancel', up);
+      }
+      popup.addEventListener('pointermove', move);
+      popup.addEventListener('pointerup', up);
+      popup.addEventListener('pointercancel', up);
+    });
+  }
+  if (resizeHandle) {
+    resizeHandle.addEventListener('pointerdown', function(event){
+      event.preventDefault();
+      event.stopPropagation();
+      resizeHandle.setPointerCapture(event.pointerId);
+      var startX = event.clientX;
+      var startY = event.clientY;
+      var rect = popup.getBoundingClientRect();
+      function move(moveEvent) {
+        var nextSize = constrainedAspectSize(rect.width, rect.height, moveEvent.clientX - startX, moveEvent.clientY - startY);
+        applyPopupSize(nextSize);
+      }
+      function up(upEvent) {
+        resizeHandle.releasePointerCapture(upEvent.pointerId);
+        rememberCurrentPopupSize();
+        resizeHandle.removeEventListener('pointermove', move);
+        resizeHandle.removeEventListener('pointerup', up);
+        resizeHandle.removeEventListener('pointercancel', up);
+      }
+      resizeHandle.addEventListener('pointermove', move);
+      resizeHandle.addEventListener('pointerup', up);
+      resizeHandle.addEventListener('pointercancel', up);
+    });
+  }
+  if ('ResizeObserver' in window) {
+    new ResizeObserver(function(){
+      rememberCurrentPopupSize();
+    }).observe(popup);
+  }
+  window.addEventListener('beforeunload', rememberCurrentPopupSize);
+  if (sessionStorage.getItem(storagePrefix + 'open') === '1') openPopup(null, { restoreSize: true });
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initRadarPopup);
+} else {
+  initRadarPopup();
+}
 })();
 </script>
 """
@@ -580,7 +803,7 @@ class AppState:
         self.tft = RemoteTFT("TFT", TFT_HOST, TFT_PORT, TFT_DISPLAY, TFT_ROTATION, TFT_TIMEOUT)
         self.leds = RemoteLEDController(LED_HOST, LED_PORT, LED_TIMEOUT)
         self.audio = RemoteAudioClock(AUDIO_HOST, AUDIO_PORT, AUDIO_TIMEOUT)
-        self.radar = RemoteRadarApi(RADAR_HOST, RADAR_PORT, NWS_TIMEOUT)
+        self.radar = RemoteRadarApi(RADAR_HOST, RADAR_API_PORT, NWS_TIMEOUT)
         self.leds.clear_all()
         self.tft.connect_if_configured()
         self._render_boot()
@@ -931,7 +1154,7 @@ class RemoteRadarApi:
         self.last_error = ""
         self.connected = False
         if not self.configured:
-            LOG.info("Radar API disabled: RADAR_HOST/RADAR_PORT are unset")
+            LOG.info("Radar command output disabled: RADAR_HOST/RADAR_API_PORT are unset")
 
     def send_area(self, zone: Zone, zoom: int | None = None) -> bool:
         if not self.configured:
@@ -1552,9 +1775,10 @@ def suppress_acknowledged_alerts(
 def display_rows_from_results(zones: list[Zone], results: list[ZoneResult], acknowledged: set[str]) -> list[str]:
     rows: list[str] = []
     current_group: int | None | object = object()
+    show_radar_controls = radar_controls_enabled()
     for idx, zone in display_zone_order(zones):
         area_cell = display_area_label_cell(zone, idx)
-        radar_cell = radar_zoom_cell(idx)
+        radar_cell = radar_zoom_cell(idx) if show_radar_controls else ""
         if zone.led_group != current_group:
             current_group = zone.led_group
             rows.append(weather_group_header_html(zone.led_group))
@@ -1589,9 +1813,14 @@ def display_rows_from_results(zones: list[Zone], results: list[ZoneResult], ackn
     return rows
 
 
+def radar_controls_enabled() -> bool:
+    return RADAR_API_PORT > 0
+
+
 def weather_group_header_html(group: int | None) -> str:
+    colspan = 7 if radar_controls_enabled() else 6
     return (
-        "<tr class='weather-group-hdr'><td colspan='7'>"
+        f"<tr class='weather-group-hdr'><td colspan='{colspan}'>"
         f"Weather Group {safe(weather_group_label(group))}"
         "</td></tr>"
     )
@@ -1642,11 +1871,14 @@ def display_alert_row(
     ack_class = " badge-ack" if acked else ""
     ack_title = "Acknowledged - click again to keep acknowledged" if acked else "Acknowledge this alert"
     detail_href = f"/desc#{alert_detail_id(zone, alert)}"
-    area_cells = (
-        f"{display_area_label_cell(zone, idx)}{radar_zoom_cell(idx)}"
-        if show_area_controls
-        else "<td>&nbsp;</td><td>&nbsp;</td>"
-    )
+    if show_area_controls:
+        area_cells = display_area_label_cell(zone, idx)
+        if radar_controls_enabled():
+            area_cells += radar_zoom_cell(idx)
+    else:
+        area_cells = "<td>&nbsp;</td>"
+        if radar_controls_enabled():
+            area_cells += "<td>&nbsp;</td>"
     return (
         "<tr>"
         f"{area_cells}"
@@ -2176,6 +2408,7 @@ def nav_html(active: str) -> str:
     def nav_item(path: str, label: str) -> str:
         cls = "active" if active == label else ""
         return f"<a href='{path}' class='{cls}'>{label}</a>"
+    radar_item = "<a href='/radar/image' id='radar-menu-link'>Radar</a>" if RADAR_IMAGE_PORT > 0 else ""
 
     return (
         "<nav><div class='nav-brand'><span>&#x26A1; WeatherAlert</span></div>"
@@ -2185,7 +2418,26 @@ def nav_html(active: str) -> str:
         f"{nav_item('/desc', 'Detail')}"
         f"{nav_item('/areas', 'Areas')}"
         f"{nav_item('/config', 'Config')}"
+        f"{radar_item}"
         "</div></nav>"
+    )
+
+
+def radar_popup_html() -> str:
+    return (
+        "<div id='radar-popup' class='radar-popup' role='dialog' aria-label='Current radar image'>"
+        "<div id='radar-popup-header' class='radar-popup-header'>"
+        "<span>Radar</span>"
+        "<div class='radar-popup-actions'>"
+        "<span id='radar-live-status' class='radar-popup-status'>loading</span>"
+        "<button id='radar-popup-close' class='radar-popup-close' type='button' aria-label='Close radar'>&times;</button>"
+        "</div>"
+        "</div>"
+        "<div class='radar-image-wrap'>"
+        "<img id='radar-live-image' class='radar-image' data-src='/radar/image' alt='Current radar image'>"
+        "</div>"
+        "<div id='radar-popup-resize' class='radar-popup-resize' role='separator' aria-label='Resize radar popup'></div>"
+        "</div>"
     )
 
 
@@ -2202,16 +2454,16 @@ def footer_html() -> str:
     )
 
 
-def page_shell(active: str, body: str, *, include_sse: bool = False, refresh_seconds: int | None = None) -> str:
+def page_shell(active: str, body: str, *, include_sse: bool = False, refresh_seconds: int | None = None, extra_script: str = "") -> str:
     refresh = ""
     if refresh_seconds:
         refresh = f"<meta http-equiv='refresh' content='{int(refresh_seconds)}'>"
-    script = SSE_SCRIPT if include_sse else ""
+    script = (SSE_SCRIPT if include_sse else "") + RADAR_POPUP_SCRIPT + extra_script
     return (
         "<!DOCTYPE html><html lang='en'><head>"
         "<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>Weather Alerts — {safe(active)}</title>{refresh}{CSS}{script}</head><body>"
-        f"{nav_html(active)}{body}</body></html>"
+        f"{nav_html(active)}{radar_popup_html()}{body}</body></html>"
     )
 
 
@@ -2224,9 +2476,10 @@ def build_display_page(zones: list[Zone], rows: list[str]) -> str:
     if not zones:
         content = "<div class='card'><div class='alert-banner alert-info'>No zones configured. Visit <a href='/config'>Config</a> to add zones.</div></div>"
     else:
+        radar_header = "<th>Radar</th>" if radar_controls_enabled() else ""
         content = (
             "<div class='card'><table class='alert-table'><thead><tr>"
-            "<th>Zone</th><th>Radar</th><th>Alert</th><th>Issued (Local)</th><th>Type</th><th>Expires (Local)</th><th>Detail</th>"
+            f"<th>Zone</th>{radar_header}<th>Alert</th><th>Issued (Local)</th><th>Type</th><th>Expires (Local)</th><th>Detail</th>"
             "</tr></thead><tbody>"
             + "".join(rows)
             + "</tbody></table></div>"
@@ -2673,6 +2926,9 @@ class WeatherAlertHandler(BaseHTTPRequestHandler):
         if path == "/events":
             self.handle_events()
             return
+        if path == "/radar/image":
+            self.handle_radar_image()
+            return
         if path == "/desc":
             self.send_html(build_desc_page())
             return
@@ -2693,6 +2949,33 @@ class WeatherAlertHandler(BaseHTTPRequestHandler):
             self.send_html(build_config_page(query))
             return
         self.send_text("Not found", status=404)
+
+    def handle_radar_image(self) -> None:
+        if not (RADAR_HOST and RADAR_IMAGE_PORT > 0):
+            self.send_text("Radar API is not configured", status=503)
+            return
+        url = f"http://{RADAR_HOST}:{RADAR_IMAGE_PORT}/api/image"
+        try:
+            response = requests.get(url, timeout=NWS_TIMEOUT)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            LOG.warning("Radar image fetch failed from %s: %s", url, exc)
+            self.send_text("Radar image unavailable", status=502)
+            return
+
+        content_type = response.headers.get("Content-Type", "image/png").split(";", 1)[0]
+        if not content_type.startswith("image/"):
+            LOG.warning("Radar image endpoint returned non-image content type %s", content_type)
+            self.send_text("Radar image endpoint returned non-image content", status=502)
+            return
+        data = response.content
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.end_headers()
+        self.wfile.write(data)
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
@@ -3017,9 +3300,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audio-host", default=AUDIO_HOST, help="Audio announcement TCP host.")
     parser.add_argument("--audio-port", type=int, default=AUDIO_PORT, help="Audio announcement TCP port.")
     parser.add_argument("--audio-timeout", type=float, default=AUDIO_TIMEOUT, help="Audio announcement TCP timeout in seconds.")
-    parser.add_argument("--radar-host", default=RADAR_HOST, help="Radar API host.")
+    parser.add_argument("--radar-host", default=RADAR_HOST, help="Radar host.")
     parser.add_argument("--radar-ip", dest="radar_host", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
-    parser.add_argument("--radar-port", type=int, default=RADAR_PORT, help="Radar API TCP port.")
+    parser.add_argument("--radar-api-port", type=int, default=RADAR_API_PORT, help="Radar TCP command/API port.")
+    parser.add_argument("--radar-image-port", type=int, default=RADAR_IMAGE_PORT, help="Radar HTTP image port.")
     parser.add_argument("--log-level", default=LOG_LEVEL, help="Python log level.")
     return parser
 
@@ -3051,7 +3335,8 @@ SETTING_FIELDS: dict[str, tuple[str, Any]] = {
     "audio_timeout": ("AUDIO_TIMEOUT", float),
     "radar_host": ("RADAR_HOST", str),
     "radar_ip": ("RADAR_HOST", str),
-    "radar_port": ("RADAR_PORT", int),
+    "radar_api_port": ("RADAR_API_PORT", int),
+    "radar_image_port": ("RADAR_IMAGE_PORT", int),
     "log_level": ("LOG_LEVEL", str),
 }
 
@@ -3095,7 +3380,7 @@ def apply_cli_config(argv: list[str] | None = None) -> None:
     global TFT_HOST, TFT_PORT, TFT_DISPLAY, TFT_ROTATION, TFT_TIMEOUT, LOG_LEVEL
     global LED_HOST, LED_PORT, LED_TIMEOUT
     global AUDIO_HOST, AUDIO_PORT, AUDIO_TIMEOUT
-    global RADAR_HOST, RADAR_PORT
+    global RADAR_HOST, RADAR_API_PORT, RADAR_IMAGE_PORT
 
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--settings", type=Path, default=SETTINGS_PATH)
@@ -3133,7 +3418,8 @@ def apply_cli_config(argv: list[str] | None = None) -> None:
     AUDIO_PORT = args.audio_port
     AUDIO_TIMEOUT = args.audio_timeout
     RADAR_HOST = args.radar_host
-    RADAR_PORT = args.radar_port
+    RADAR_API_PORT = args.radar_api_port
+    RADAR_IMAGE_PORT = args.radar_image_port
     LOG_LEVEL = str(args.log_level).upper()
 
     logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(message)s", force=True)

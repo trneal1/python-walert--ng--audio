@@ -257,11 +257,18 @@ Radar output is optional. Configure the destination with:
 ```json
 {
   "radar_host": "192.168.1.90",
-  "radar_port": 8081
+  "radar_api_port": 7778,
+  "radar_image_port": 8081
 }
 ```
 
+`radar_api_port` is the TCP command/API port used by the row Radar buttons. `radar_image_port` is the HTTP port used to fetch the current image from `/api/image`.
+
 On the Display page, each area row starts with zoom `7`. Click the Radar button on a row to center the radar map using that row's current zoom. Use the zoom selector beside it to choose zoom `6`, `7`, `8`, or `9`; only that row's zoom changes, and the new zoom is sent immediately. Latitude/longitude areas are sent as `lat=<area latitude> lon=<area longitude> zoom=<zoom>`. NWS zone/county and SAME areas are sent as `same=<assigned code> zoom=<zoom>`.
+
+The Display page shows the Radar column only when `radar_api_port` is configured.
+
+Use the Radar item in the top menu to open the current radar image in a draggable, resizable popup window. The image is loaded from the radar image service's `/api/image` endpoint through this web service and refreshes automatically every 5 seconds while the popup is open, so changes made from this app or from another radar interface appear without manually reloading the page.
 
 ## 10. Air Quality
 
@@ -306,7 +313,7 @@ Common options:
 | `--led-host`, `--led-port` | LED controller connection | Disabled / `7777` |
 | `--tft-host`, `--tft-port` | TFT connection | Disabled / `8888` |
 | `--audio-host`, `--audio-port` | Audio TCP connection | Disabled |
-| `--radar-host`, `--radar-port` | Radar API connection | Disabled |
+| `--radar-host`, `--radar-api-port`, `--radar-image-port` | Radar command and image API connections | Disabled |
 | `--log-level` | Python logging level | `INFO` |
 
 Settings-file keys match the long command-line option names without leading dashes. Use underscores or hyphens, for example `alert_cycle_seconds` or `alert-cycle-seconds`.
