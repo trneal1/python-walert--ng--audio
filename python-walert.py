@@ -168,6 +168,7 @@ button.badge{font-family:inherit;cursor:pointer}
 .radar-popup-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px 8px 12px;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px;cursor:move;user-select:none;touch-action:none}
 .radar-popup-status{font-family:monospace;text-transform:none;letter-spacing:0;color:var(--text-muted)}
 .radar-popup-actions{display:flex;align-items:center;gap:10px;margin-left:auto}
+.radar-popup-control{padding:5px 10px;font-size:12px}
 .radar-popup-close{inline-size:28px;block-size:28px;border:1px solid var(--border);border-radius:5px;background:#1e1e1e;color:var(--text);font-size:18px;line-height:1;cursor:pointer}
 .radar-popup-close:hover{border-color:var(--accent);color:var(--accent)}
 .radar-image-wrap{display:flex;align-items:center;justify-content:center;background:#000;min-height:0;overflow:hidden;flex:1}
@@ -242,6 +243,7 @@ function initRadarPopup(){
   if (!popup || !link) return;
   var img = document.getElementById('radar-live-image');
   var status = document.getElementById('radar-live-status');
+  var control = document.getElementById('radar-control-open');
   var close = document.getElementById('radar-popup-close');
   var header = document.getElementById('radar-popup-header');
   var resizeHandle = document.getElementById('radar-popup-resize');
@@ -369,7 +371,19 @@ function initRadarPopup(){
       refreshTimer = 0;
     }
   }
+  function openRadarControl(event) {
+    if (event) event.preventDefault();
+    var url = control ? control.getAttribute('data-url') : '';
+    if (!url) {
+      if (status) status.textContent = 'radar control unavailable';
+      return;
+    }
+    if (status) status.textContent = 'opening radar control';
+    var opened = window.open(url, '_blank', 'noopener');
+    if (status) status.textContent = opened ? 'radar control opened' : 'allow popups to open radar control';
+  }
   link.addEventListener('click', openPopup);
+  if (control) control.addEventListener('click', openRadarControl);
   if (close) close.addEventListener('click', closePopup);
   document.addEventListener('keydown', function(event){
     if (event.key === 'Escape') closePopup();
@@ -689,6 +703,10 @@ def redirect(handler: BaseHTTPRequestHandler, location: str) -> None:
     handler.send_header("Location", location)
     handler.send_header("Content-Length", "0")
     handler.end_headers()
+
+
+def radar_control_url() -> str:
+    return f"http://{RADAR_HOST}:{RADAR_IMAGE_PORT}"
 
 
 def read_form(handler: BaseHTTPRequestHandler) -> dict[str, str]:
@@ -2424,12 +2442,14 @@ def nav_html(active: str) -> str:
 
 
 def radar_popup_html() -> str:
+    control_url = safe(radar_control_url())
     return (
         "<div id='radar-popup' class='radar-popup' role='dialog' aria-label='Current radar image'>"
         "<div id='radar-popup-header' class='radar-popup-header'>"
         "<span>Radar</span>"
         "<div class='radar-popup-actions'>"
         "<span id='radar-live-status' class='radar-popup-status'>loading</span>"
+        f"<button id='radar-control-open' class='btn btn-secondary btn-sm radar-popup-control' type='button' data-url='{control_url}' title='Open radar control in a new browser window or tab'>Radar Control</button>"
         "<button id='radar-popup-close' class='radar-popup-close' type='button' aria-label='Close radar'>&times;</button>"
         "</div>"
         "</div>"

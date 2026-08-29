@@ -268,7 +268,7 @@ On the Display page, each area row starts with zoom `7`. Click the Radar button 
 
 The Display page shows the Radar column only when `radar_api_port` is configured.
 
-Use the Radar item in the top menu to open the current radar image in a draggable, resizable popup window. The image is loaded from the radar image service's `/api/image` endpoint through this web service and refreshes automatically every 5 seconds while the popup is open, so changes made from this app or from another radar interface appear without manually reloading the page.
+Use the Radar item in the top menu to open the current radar image in a draggable, resizable popup window. The image is loaded from the radar image service's `/api/image` endpoint through this web service and refreshes automatically every 5 seconds while the popup is open, so changes made from this app or from another radar interface appear without manually reloading the page. Click Radar Control in the popup header to open `http://<radar_host>:<radar_image_port>` in a new browser window or tab, without adding `/api/image` to the end of the URL. Because the button opens the URL from the web page, it works from browsers on Windows, Linux, macOS, iOS, and iPadOS, subject to each browser's popup/new-tab settings.
 
 ## 10. Air Quality
 
