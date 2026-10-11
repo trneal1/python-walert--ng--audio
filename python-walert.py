@@ -653,10 +653,10 @@ def led_priority_color_for_event(event: str) -> tuple[int, str]:
     e = event or ""
     if "Tornado" in e and "Warning" in e:
         return 0, "white"
-    if "Tornado" in e and "Watch" in e:
-        return 1, "orange"
     if "Warning" in e:
-        return 2, "red"
+        return 1, "red"
+    if "Tornado" in e and "Watch" in e:
+        return 2, "orange"
     if "Watch" in e:
         return 3, "yellow"
     if "Statement" in e:

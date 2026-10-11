@@ -201,8 +201,8 @@ When a group contains multiple unacknowledged alerts, the highest-priority event
 | Priority | Event match | Color |
 |---:|---|---|
 | 1 | Tornado Warning | White |
-| 2 | Tornado Watch | Orange |
-| 3 | Other Warning | Red |
+| 2 | Other Warning | Red |
+| 3 | Tornado Watch | Orange |
 | 4 | Other Watch | Yellow |
 | 5 | Statement | Blue |
 | 6 | Advisory | Green |
