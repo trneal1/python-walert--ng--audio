@@ -208,6 +208,10 @@ When a group contains multiple unacknowledged alerts, the highest-priority event
 | 6 | Advisory | Green |
 | 7 | Other alert | Purple |
 
+Open **Priority** in the web interface to view and edit these priority rules. You can reorder rules, change colors, add new match text, or remove rules. Save the configuration to write the current zone list and LED priority list to `weatheralert_config.json`.
+
+Match text is compared against the NWS event name. More specific matches take precedence over less specific matches for the same event, so a rule like `Tornado Watch` is used before a broader `Watch` rule.
+
 A newly detected NWS message of type `Alert` blinks for approximately 30 seconds and then remains steadily illuminated. Color changes, acknowledgement, expiration, and alert removal update the LED state. A group with no unacknowledged alerts is turned off.
 
 Unacknowledged `Update` messages affect the steady LED color according to their event priority. Updates are not treated as new-alert blink triggers.

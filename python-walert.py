@@ -72,6 +72,16 @@ DEFAULT_ZONES = [
     {"id": "PAZ065", "code": "PA Y", "active": True, "type": "same", "lat": "", "lon": "", "led_group": 6},
 ]
 
+DEFAULT_LED_PRIORITIES = [
+    {"match": "Tornado Warning", "color": "white"},
+    {"match": "Warning", "color": "red"},
+    {"match": "Tornado Watch", "color": "orange"},
+    {"match": "Watch", "color": "yellow"},
+    {"match": "Statement", "color": "blue"},
+    {"match": "Advisory", "color": "green"},
+    {"match": "", "color": "purple"},
+]
+
 STATE_FIPS_TO_AREA = {
     "01": "AL", "02": "AK", "04": "AZ", "05": "AR", "06": "CA", "08": "CO", "09": "CT",
     "10": "DE", "11": "DC", "12": "FL", "13": "GA", "15": "HI", "16": "ID", "17": "IL",
@@ -120,6 +130,7 @@ RADAR_IMAGE_PORT = 0
 
 LOG_LEVEL = "INFO"
 LOG = logging.getLogger("weatheralert")
+STATE: "AppState | None" = None
 
 
 # ── Shared stylesheet / layout ────────────────────────────────────────────────
@@ -146,16 +157,16 @@ nav{background:var(--surface);border-bottom:2px solid var(--accent);padding:0 20
 .page-subtitle{color:var(--text-muted);font-size:13px;margin-bottom:24px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px;margin-bottom:20px}
 .card-title{font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--border)}
-.alert-table,.zone-list,.timing-table{width:100%;border-collapse:collapse}
+.alert-table,.zone-list,.timing-table,.priority-list{width:100%;border-collapse:collapse}
 .zone-list-config{min-width:1260px}
-.alert-table th,.zone-list th,.timing-table th{text-align:left;padding:8px 12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px;border-bottom:1px solid var(--border)}
-.alert-table td,.zone-list td,.timing-table td{padding:7px 12px;vertical-align:top;border-bottom:1px solid #1e1e1e;font-size:13px}
-.alert-table tr:last-child td,.zone-list tr:last-child td,.timing-table tr:last-child td{border-bottom:none}
+.alert-table th,.zone-list th,.timing-table th,.priority-list th{text-align:left;padding:8px 12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px;border-bottom:1px solid var(--border)}
+.alert-table td,.zone-list td,.timing-table td,.priority-list td{padding:7px 12px;vertical-align:middle;border-bottom:1px solid #1e1e1e;font-size:13px}
+.alert-table tr:last-child td,.zone-list tr:last-child td,.timing-table tr:last-child td,.priority-list tr:last-child td{border-bottom:none}
 .weather-group-hdr td{background:#242424;color:var(--text);font-weight:700;font-size:12px;padding:8px 12px;text-transform:uppercase;letter-spacing:.7px;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
 .zone-hdr td{background:#1a1a0a;color:var(--accent);font-weight:600;font-size:12px;padding:6px 12px;text-transform:uppercase;letter-spacing:.5px}
 .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;line-height:1.5}
 button.badge{font-family:inherit;cursor:pointer}
-.badge-ack{opacity:.55;filter:saturate(.55)}
+.badge-ack{background-image:repeating-linear-gradient(135deg,#0000 0 4px,#ffffff66 4px 7px)}
 .sev-tornado{background:#ffffff22;color:#fff;border:1px solid #fff}
 .sev-warning{background:#ef444422;color:#ef4444;border:1px solid #ef4444}
 .sev-watch{background:#f5c40022;color:#f5c400;border:1px solid #f5c400}
@@ -192,7 +203,8 @@ button.badge{font-family:inherit;cursor:pointer}
 .btn:hover{opacity:.85}.btn-danger{background:#ef4444;color:#fff}.btn-primary{background:var(--accent);color:#000}
 .btn-secondary{background:var(--border);color:var(--text)}.btn-sm{padding:4px 10px;font-size:12px}
 input[type=text],select{background:#1e1e1e;border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:5px;font-size:13px;font-family:monospace;outline:none}
-input[type=text]:focus,select:focus{border-color:var(--accent)}
+input[type=color]{inline-size:44px;block-size:34px;background:#1e1e1e;border:1px solid var(--border);border-radius:5px;padding:3px;cursor:pointer}
+input[type=text]:focus,select:focus,input[type=color]:focus{border-color:var(--accent)}
 .add-form{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
 .form-group{display:flex;flex-direction:column;gap:5px}
 .form-label{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px}
@@ -220,7 +232,11 @@ pre.detail,pre.json{white-space:pre-wrap;word-break:break-word;font-family:monos
 .check-label input{accent-color:var(--accent);inline-size:16px;block-size:16px;cursor:pointer}
 .type-same{color:var(--accent);font-size:11px;font-weight:600;background:#f5c40011;border:1px solid var(--accent);border-radius:3px;padding:1px 5px}
 .type-latlon{color:var(--blue);font-size:11px;font-weight:600;background:#3b82f611;border:1px solid var(--blue);border-radius:3px;padding:1px 5px}
-@media(max-width:760px){nav{padding:0 10px}.nav-links a{padding:10px 8px}.page{padding:18px 12px}.alert-table,.zone-list,.timing-table{display:block;overflow:auto}}
+.color-chip{display:inline-flex;align-items:center;gap:8px;font-family:monospace;color:var(--text)}
+.color-swatch{display:inline-block;inline-size:18px;block-size:18px;border-radius:4px;border:1px solid #ffffff55;background:var(--swatch,#888)}
+.priority-list input[type=text]{width:100%;min-width:130px}
+.priority-color-field{display:flex;align-items:center;gap:8px}
+@media(max-width:760px){nav{padding:0 10px}.nav-links a{padding:10px 8px}.page{padding:18px 12px}.alert-table,.zone-list,.timing-table,.priority-list{display:block;overflow:auto}}
 </style>
 """
 
@@ -551,17 +567,27 @@ def display_zone_order(zones: list["Zone"]) -> list[tuple[int, "Zone"]]:
     )
 
 
+def color_css_class(color: str) -> str:
+    normalized = normalize_led_color(color, "green")
+    if normalized == "white":
+        return "sev-tornado"
+    if normalized in {"red", "#ff0000", "#ef4444"}:
+        return "sev-warning"
+    if normalized in {"yellow", "orange", "#ffff00", "#f5c400", "#ffb400", "#ff6000"}:
+        return "sev-watch"
+    if normalized in {"blue", "cyan", "#0000ff", "#3b82f6", "#00ffff"}:
+        return "sev-statement"
+    return "sev-advisory"
+
+
 def severity_for_event(event: str) -> tuple[str, str]:
-    e = event or ""
-    if "Tornado" in e and "Warning" in e:
-        return "sev-tornado", "white"
-    if "Warning" in e:
-        return "sev-warning", "red"
-    if "Watch" in e:
-        return "sev-watch", "yellow"
-    if "Statement" in e:
-        return "sev-statement", "blue"
-    return "sev-advisory", "green"
+    _, color = led_priority_color_for_event(event)
+    return color_css_class(color), color
+
+
+def priority_badge_style(color: str) -> str:
+    color_value = led_color_input_value(color)
+    return f"background-color:{color_value}22;color:{color_value};border:1px solid {color_value}"
 
 
 def alert_signature(alert: dict[str, str]) -> tuple[str, str, str, str, str, str, str]:
@@ -650,20 +676,11 @@ def led_color_for_event(event: str) -> str:
 
 
 def led_priority_color_for_event(event: str) -> tuple[int, str]:
-    e = event or ""
-    if "Tornado" in e and "Warning" in e:
-        return 0, "white"
-    if "Warning" in e:
-        return 1, "red"
-    if "Tornado" in e and "Watch" in e:
-        return 2, "orange"
-    if "Watch" in e:
-        return 3, "yellow"
-    if "Statement" in e:
-        return 4, "blue"
-    if "Advisory" in e:
-        return 5, "green"
-    return 6, "purple"
+    if STATE is None:
+        priorities = led_priorities_from_config(DEFAULT_LED_PRIORITIES)
+    else:
+        priorities = STATE.led_priorities_snapshot()
+    return led_priority_color_for_event_from_priorities(event, priorities)
 
 
 def qflag(query: dict[str, list[str]], key: str) -> bool:
@@ -757,6 +774,77 @@ class Zone:
 
 
 @dataclass
+class LedPriority:
+    match: str
+    color: str
+
+    def normalised(self) -> "LedPriority":
+        return LedPriority(
+            match=re.sub(r"\s+", " ", self.match.strip()),
+            color=normalize_led_color(self.color, "green"),
+        )
+
+    def specificity(self) -> tuple[int, int]:
+        if not self.match:
+            return (0, 0)
+        words = re.findall(r"[A-Za-z0-9]+", self.match)
+        return (len(words), len(self.match))
+
+
+def normalize_led_color(value: Any, default: str = "green") -> str:
+    color = str(value or "").strip().lower()
+    aliases = {
+        "magenta": "purple",
+        "violet": "purple",
+        "grey": "gray",
+    }
+    color = aliases.get(color, color)
+    if color in RemoteLEDController.COLORS:
+        return color
+    if re.fullmatch(r"#[0-9a-f]{6}", color):
+        return color
+    return default
+
+
+def led_priorities_from_config(rows: Any) -> list[LedPriority]:
+    priorities: list[LedPriority] = []
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            priority = LedPriority(
+                match=str(row.get("match", "")),
+                color=str(row.get("color", "")),
+            ).normalised()
+            priorities.append(priority)
+    if not priorities:
+        priorities = [LedPriority(**row).normalised() for row in DEFAULT_LED_PRIORITIES]
+    if not any(priority.match == "" for priority in priorities):
+        priorities.append(LedPriority("", "purple"))
+    return priorities
+
+
+def led_priority_color_for_event_from_priorities(event: str, priorities: list[LedPriority]) -> tuple[int, str]:
+    haystack = str(event or "").lower()
+    matches: list[tuple[tuple[int, int], int, LedPriority]] = []
+    fallback: tuple[int, LedPriority] | None = None
+    for idx, priority in enumerate(priorities):
+        if not priority.match:
+            if fallback is None:
+                fallback = (idx, priority)
+            continue
+        terms = re.findall(r"[A-Za-z0-9]+", priority.match.lower())
+        if terms and all(re.search(rf"\b{re.escape(term)}\b", haystack) for term in terms):
+            matches.append((priority.specificity(), idx, priority))
+    if matches:
+        _, idx, priority = max(matches, key=lambda item: (item[0][0], item[0][1], -item[1]))
+        return idx, priority.color
+    if fallback is not None:
+        return fallback[0], fallback[1].color
+    return len(priorities), "purple"
+
+
+@dataclass
 class ZoneResult:
     zone_key: str = ""
     fetched: bool = False
@@ -802,6 +890,7 @@ class AppState:
         self._save_runtime()
 
         self.saved_at = ""
+        self.led_priorities = led_priorities_from_config(DEFAULT_LED_PRIORITIES)
         self.zones = self._load_config_or_defaults()
         self.results: list[ZoneResult] = [ZoneResult() for _ in self.zones]
         self.radar_zooms: list[int] = [7 for _ in self.zones]
@@ -854,6 +943,7 @@ class AppState:
             if len(zones) > MAX_ZONES:
                 zones = zones[:MAX_ZONES]
             self.saved_at = str(data.get("saved_at", ""))
+            self.led_priorities = led_priorities_from_config(data.get("led_priorities", DEFAULT_LED_PRIORITIES))
             if zones:
                 LOG.info("Loaded %d saved zones from %s", len(zones), CONFIG_PATH)
                 return zones
@@ -863,6 +953,7 @@ class AppState:
             LOG.warning("Saved configuration ignored: %s", exc)
         LOG.info("Using built-in default zones")
         self.saved_at = ""
+        self.led_priorities = led_priorities_from_config(DEFAULT_LED_PRIORITIES)
         return [zone_from_config_row(row, idx) for idx, row in enumerate(DEFAULT_ZONES[:MAX_ZONES])]
 
     def saved_zone_ids(self) -> set[str]:
@@ -878,9 +969,10 @@ class AppState:
             payload = {
                 "saved_at": self.saved_at,
                 "zones": [asdict(z) for z in self.zones],
+                "led_priorities": [asdict(p) for p in self.led_priorities],
             }
         CONFIG_PATH.write_text(json.dumps(payload, indent=2))
-        LOG.info("Saved %d zones at %s", len(payload["zones"]), self.saved_at)
+        LOG.info("Saved %d zones and %d LED priorities at %s", len(payload["zones"]), len(payload["led_priorities"]), self.saved_at)
 
     def clear_saved_config(self) -> None:
         try:
@@ -895,6 +987,7 @@ class AppState:
         try:
             data = json.loads(CONFIG_PATH.read_text())
             zones = [zone_from_config_row(row, idx) for idx, row in enumerate(data.get("zones", []))][:MAX_ZONES]
+            led_priorities = led_priorities_from_config(data.get("led_priorities", DEFAULT_LED_PRIORITIES))
             if not zones and data.get("zones"):
                 return False
         except Exception:
@@ -903,6 +996,7 @@ class AppState:
             self.zones = zones
             self.results = [ZoneResult() for _ in zones]
             self.radar_zooms = [7 for _ in zones]
+            self.led_priorities = led_priorities
             self.saved_at = str(data.get("saved_at", self.saved_at))
         refresh_leds_from_cached_results(self)
         self.notify_reload()
@@ -919,6 +1013,14 @@ class AppState:
     def zones_snapshot(self) -> list[Zone]:
         with self.lock:
             return [Zone(**asdict(z)) for z in self.zones]
+
+    def led_priorities_snapshot(self) -> list[LedPriority]:
+        with self.lock:
+            return [LedPriority(**asdict(p)) for p in self.led_priorities]
+
+    def set_led_priorities(self, priorities: list[LedPriority]) -> None:
+        with self.lock:
+            self.led_priorities = led_priorities_from_config([asdict(p) for p in priorities])
 
     def radar_zoom_for_idx(self, idx: int) -> int:
         with self.lock:
@@ -965,11 +1067,14 @@ class AppState:
         with self.lock:
             return set(self.acknowledged_alerts)
 
-    def acknowledge_alert(self, key: str) -> bool:
+    def toggle_alert_acknowledgement(self, key: str) -> bool:
         if not re.fullmatch(r"[0-9a-f]{64}", key):
             return False
         with self.lock:
-            self.acknowledged_alerts.add(key)
+            if key in self.acknowledged_alerts:
+                self.acknowledged_alerts.remove(key)
+            else:
+                self.acknowledged_alerts.add(key)
             self.acknowledged_generation += 1
         return True
 
@@ -1567,7 +1672,7 @@ class RemoteLEDController:
                 new_grouped_alerts = [alert for alert in led_alerts if alert_message_type_is_new(alert)]
                 signatures = {led_alert_identity(alert) for alert in new_grouped_alerts}
                 color_name = self._highest_urgency_color(led_alerts)
-                rgb = self.COLORS.get(color_name, self.COLORS["green"])
+                rgb = self._rgb_for_color(color_name)
                 previous = self.last_signatures[led] or set()
                 has_new_alert = bool(signatures - previous)
                 has_removed_alert = signatures != previous and not has_new_alert
@@ -1601,6 +1706,12 @@ class RemoteLEDController:
             return "green"
         _, color = min(led_priority_color_for_event(alert.get("event", "")) for alert in alerts)
         return color
+
+    def _rgb_for_color(self, color_name: str) -> list[int]:
+        normalized = normalize_led_color(color_name, "green")
+        if normalized.startswith("#"):
+            return [int(normalized[i:i + 2], 16) for i in (1, 3, 5)]
+        return self.COLORS.get(normalized, self.COLORS["green"])
 
     def _send_off(self, led: int) -> bool:
         return self._send(
@@ -1883,11 +1994,12 @@ def display_alert_row(
     expires = short_expiry(alert.get("expires", ""))
     message_type = alert_message_type(alert)
     message_type_cell = safe(message_type) or "<span style='color:var(--text-muted)'>-</span>"
-    sev_class, _ = severity_for_event(event)
+    _, priority_color = severity_for_event(event)
+    badge_style = priority_badge_style(priority_color)
     ack_key = alert_ack_key(zone, alert)
     acked = alert_is_acknowledged(zone, alert, acknowledged)
     ack_class = " badge-ack" if acked else ""
-    ack_title = "Acknowledged - click again to keep acknowledged" if acked else "Acknowledge this alert"
+    ack_title = "Acknowledged - click to unacknowledge this alert" if acked else "Acknowledge this alert"
     detail_href = f"/desc#{alert_detail_id(zone, alert)}"
     if show_area_controls:
         area_cells = display_area_label_cell(zone, idx)
@@ -1902,7 +2014,7 @@ def display_alert_row(
         f"{area_cells}"
         "<td><form method='POST' action='/alert/ack' style='display:inline'>"
         f"<input type='hidden' name='key' value='{safe(ack_key)}'>"
-        f"<button type='submit' class='badge {sev_class}{ack_class}' title='{safe(ack_title)}'>{safe(event) or '&nbsp;'}</button>"
+        f"<button type='submit' class='badge{ack_class}' style='{safe(badge_style)}' title='{safe(ack_title)}'>{safe(event) or '&nbsp;'}</button>"
         "</form></td>"
         f"<td class='exp'>{safe(issued)}</td>"
         f"<td>{message_type_cell}</td>"
@@ -2436,6 +2548,7 @@ def nav_html(active: str) -> str:
         f"{nav_item('/desc', 'Detail')}"
         f"{nav_item('/areas', 'Areas')}"
         f"{nav_item('/config', 'Config')}"
+        f"{nav_item('/priority', 'Priority')}"
         f"{radar_item}"
         "</div></nav>"
     )
@@ -2772,9 +2885,9 @@ def build_config_page(query: dict[str, list[str]]) -> str:
         ("audiooff", "info", "Audio announcements disabled for that zone."),
         ("ledgroup", "success", "Weather group updated."),
         ("moved", "success", "Zone order updated."),
-        ("saved", "success", "Configuration saved to disk. It will be restored on next service start."),
+        ("saved", "success", "Configuration saved to disk. Zones and LED priorities will be restored on next service start."),
         ("cleared", "info", "Saved configuration cleared. Built-in defaults will be used on next start."),
-        ("restored", "success", "Saved configuration restored. Running zones now match the saved configuration."),
+        ("restored", "success", "Saved configuration restored. Running zones and LED priorities now match the saved configuration."),
         ("nosavedrestore", "error", "No saved configuration found — nothing to restore."),
         ("invalid", "error", "Invalid input. Use an NWS zone/county code, a 6-digit SAME code, or valid Lat/Lon values. Labels may use 1–7 characters."),
     ]
@@ -2860,10 +2973,10 @@ def build_config_page(query: dict[str, list[str]]) -> str:
     save_card = (
         "<div class='card'><div class='card-title'>&#x1F4BE; Save Configuration</div>"
         f"{save_banner}<div class='inline-actions'>"
-        "<form method='POST' action='/config/save'><button type='submit' class='btn btn-primary'>&#x1F4BE; Save Current Zones</button></form>"
+        "<form method='POST' action='/config/save'><button type='submit' class='btn btn-primary'>&#x1F4BE; Save Current Configuration</button></form>"
         f"<form method='POST' action='/config/restore' onsubmit=\"return confirm('Replace current zones with saved config?')\"><button type='submit' class='btn btn-secondary' {disabled}>&#x21BA; Restore from Saved</button></form>"
         f"<form method='POST' action='/config/clearsave' onsubmit=\"return confirm('Clear saved config? Defaults will load on next start.')\"><button type='submit' class='btn btn-secondary' {disabled}>&#x1F5D1; Clear Saved Config</button></form>"
-        "</div><div class='help-text' style='margin-top:10px'><b>Save</b> writes the current zone list to disk. <b>Restore</b> replaces the running zones immediately. <b>Clear</b> removes the saved file.</div></div>"
+        "</div><div class='help-text' style='margin-top:10px'><b>Save</b> writes the current zone list and LED priorities to disk. <b>Restore</b> replaces the running configuration immediately. <b>Clear</b> removes the saved file.</div></div>"
     )
     body = (
         "<div class='page page-wide'><div class='page-title'><span>&#x2699;&#xFE0F;</span>Zone Configuration</div>"
@@ -2907,6 +3020,130 @@ def build_add_zone_card(at_max: bool) -> str:
         "<script>function showTab(t){document.getElementById('pane-same').style.display=t==='same'?'':'none';document.getElementById('pane-latlon').style.display=t==='latlon'?'':'none';var ts=document.getElementById('tab-same');var tl=document.getElementById('tab-latlon');ts.style.borderBottomColor=t==='same'?'var(--accent)':'transparent';ts.style.color=t==='same'?'var(--accent)':'var(--text-muted)';tl.style.borderBottomColor=t==='latlon'?'var(--blue)':'transparent';tl.style.color=t==='latlon'?'var(--blue)':'var(--text-muted)';}</script>"
         "</div>"
     )
+
+
+def led_color_input_value(color: str) -> str:
+    normalized = normalize_led_color(color, "green")
+    if normalized.startswith("#"):
+        return normalized
+    rgb = RemoteLEDController.COLORS.get(normalized, RemoteLEDController.COLORS["green"])
+    return "#" + "".join(f"{value:02x}" for value in rgb)
+
+
+def led_priority_color_options(selected: str) -> str:
+    normalized = normalize_led_color(selected, "green")
+    colors = ["white", "red", "orange", "yellow", "blue", "green", "purple"]
+    options = []
+    for color in colors:
+        chosen = "selected" if normalized == color else ""
+        options.append(f"<option value='{safe(color)}' {chosen}>{safe(color.title())}</option>")
+    options.append(f"<option value='custom' {'selected' if normalized.startswith('#') else ''}>Custom</option>")
+    return "".join(options)
+
+
+PRIORITY_COLOR_SCRIPT = """
+<script>
+var priorityNamedColors = {
+  white: '#ffffff',
+  red: '#ff0000',
+  orange: '#ff6000',
+  yellow: '#ffb400',
+  blue: '#0000ff',
+  green: '#00ff00',
+  purple: '#a000ff'
+};
+function syncPriorityColorInputs(root){
+  (root || document).querySelectorAll('select[data-color-select]').forEach(function(select){
+    var picker = document.getElementById(select.getAttribute('data-color-select'));
+    if (!picker) return;
+    if (select.value !== 'custom' && priorityNamedColors[select.value]) {
+      picker.value = priorityNamedColors[select.value];
+    }
+    picker.disabled = select.value !== 'custom';
+  });
+}
+document.addEventListener('DOMContentLoaded', function(){
+  syncPriorityColorInputs(document);
+  document.addEventListener('change', function(event){
+    if (event.target && event.target.matches('select[data-color-select]')) {
+      syncPriorityColorInputs(document);
+    }
+  });
+});
+</script>
+"""
+
+
+def build_led_page(query: dict[str, list[str]]) -> str:
+    messages = [
+        ("updated", "success", "LED priorities updated."),
+        ("added", "success", "LED priority added."),
+        ("deleted", "success", "LED priority deleted."),
+        ("moved", "success", "LED priority order updated."),
+        ("saved", "success", "Configuration saved to disk. LED priorities will be restored on next service start."),
+        ("invalid", "error", "Invalid LED priority input."),
+    ]
+    banner = ""
+    for flag, level, text in messages:
+        if qflag(query, flag):
+            banner = f"<div class='alert-banner alert-{level}'>{text}</div>"
+            break
+
+    priorities = STATE.led_priorities_snapshot()
+    rows: list[str] = []
+    for idx, priority in enumerate(priorities):
+        match_value = safe(priority.match)
+        label = "Other alert" if not priority.match else priority.match
+        color_value = led_color_input_value(priority.color)
+        color_label = safe(priority.color)
+        color_picker_id = f"custom-color-{idx}"
+        swatch = f"<span class='color-swatch' style='--swatch:{safe(color_value)}'></span>"
+        move_up_disabled = "disabled" if idx == 0 else ""
+        move_down_disabled = "disabled" if idx == len(priorities) - 1 else ""
+        delete_disabled = "disabled" if len(priorities) <= 1 else ""
+        rows.append(
+            "<tr>"
+            f"<td class='zone-idx'>{idx + 1}</td>"
+            f"<td><input type='text' form='led-priority-form' name='match_{idx}' value='{match_value}' maxlength='80' placeholder='Other alert'></td>"
+            f"<td><div class='priority-color-field'><select form='led-priority-form' name='color_{idx}' data-color-select='{safe(color_picker_id)}'>{led_priority_color_options(priority.color)}</select>"
+            f"<input id='{safe(color_picker_id)}' type='color' form='led-priority-form' name='custom_color_{idx}' value='{safe(color_value)}' title='Custom LED color'></div></td>"
+            f"<td><span class='color-chip'>{swatch}{safe(label)} -> {color_label}</span></td>"
+            "<td><div class='inline-actions config-actions'>"
+            f"<form method='POST' action='/priority/move'><input type='hidden' name='idx' value='{idx}'><input type='hidden' name='dir' value='up'><button type='submit' class='btn btn-secondary btn-sm' title='Move up' {move_up_disabled}>&#x25B2;</button></form>"
+            f"<form method='POST' action='/priority/move'><input type='hidden' name='idx' value='{idx}'><input type='hidden' name='dir' value='down'><button type='submit' class='btn btn-secondary btn-sm' title='Move down' {move_down_disabled}>&#x25BC;</button></form>"
+            f"<form method='POST' action='/priority/delete' onsubmit=\"return confirm('Remove LED priority {safe(label)}?')\"><input type='hidden' name='idx' value='{idx}'><button type='submit' class='btn btn-danger btn-sm' {delete_disabled}>&#x2715; Remove</button></form>"
+            "</div></td></tr>"
+        )
+    table_rows = "".join(rows)
+    priority_count = len(priorities)
+    saved_note = (
+        f"<div class='alert-banner alert-success'>&#x2713; Saved configuration active — last saved: <b>{safe(STATE.saved_at)}</b></div>"
+        if STATE.saved_at
+        else "<div class='alert-banner alert-info'>&#x2139; No saved configuration — built-in defaults will be used on next service start until you save.</div>"
+    )
+    body = (
+        "<div class='page page-wide'><div class='page-title'><span>&#x1F4A1;</span>LED Priorities</div>"
+        "<div class='page-subtitle'>Edit LED match rules, colors, and priority order. More specific matches win before broader matches, so Tornado Watch can override Watch.</div>"
+        f"{banner}<div class='card'><div class='card-title'>Priority Rules</div>{saved_note}"
+        "<form id='led-priority-form' method='POST' action='/priority/update'></form>"
+        f"<input type='hidden' form='led-priority-form' name='count' value='{priority_count}'>"
+        "<table class='priority-list'><thead><tr><th>Priority</th><th>Match Text</th><th>LED Color</th><th>Preview</th><th>Actions</th></tr></thead>"
+        f"<tbody>{table_rows}</tbody></table>"
+        "<div class='inline-actions' style='margin-top:16px'>"
+        "<button type='submit' form='led-priority-form' class='btn btn-primary'>&#x2713; Apply Changes</button>"
+        "<button type='submit' form='led-priority-form' name='save' value='1' class='btn btn-secondary'>&#x1F4BE; Save LED Priorities</button>"
+        "</div></div>"
+        "<div class='card'><div class='card-title'>Add Priority</div>"
+        "<form method='POST' action='/priority/add' class='add-form'>"
+        "<div class='form-group'><label class='form-label'>Match Text</label><input type='text' name='match' placeholder='e.g. Flash Flood Warning' maxlength='80'><div class='help-text'>Leave blank for the fallback rule.</div></div>"
+        "<div class='form-group'><label class='form-label'>Color</label><select name='color' data-color-select='new-custom-color'>"
+        f"{led_priority_color_options('purple')}</select></div>"
+        "<div class='form-group'><label class='form-label'>Custom</label><input id='new-custom-color' type='color' name='custom_color' value='#a000ff'></div>"
+        "<div class='form-group' style='justify-content:flex-end'><button type='submit' class='btn btn-primary'>&#x2B; Add Priority</button></div>"
+        "</form></div>"
+        f"{footer_html()}</div>"
+    )
+    return page_shell("Priority", body, extra_script=PRIORITY_COLOR_SCRIPT)
 
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
@@ -2967,6 +3204,9 @@ class WeatherAlertHandler(BaseHTTPRequestHandler):
             return
         if path == "/config":
             self.send_html(build_config_page(query))
+            return
+        if path == "/priority":
+            self.send_html(build_led_page(query))
             return
         self.send_text("Not found", status=404)
 
@@ -3039,6 +3279,26 @@ class WeatherAlertHandler(BaseHTTPRequestHandler):
             return
         if path == "/config/restore":
             redirect(self, "/config?restored" if STATE.restore_saved_config() else "/config?nosavedrestore")
+            return
+        if path == "/priority/update":
+            redirect(self, update_led_priorities(form))
+            return
+        if path == "/priority/add":
+            redirect(self, add_led_priority(form))
+            return
+        if path == "/priority/delete":
+            redirect(self, delete_led_priority(form))
+            return
+        if path == "/priority/move":
+            redirect(self, move_led_priority(form))
+            return
+        if path == "/priority/save":
+            try:
+                STATE.save_config()
+                redirect(self, "/priority?saved")
+            except Exception:
+                LOG.exception("Save LED priorities failed")
+                redirect(self, "/priority?invalid")
             return
         if path == "/alert/ack":
             redirect(self, acknowledge_alert(form))
@@ -3175,7 +3435,7 @@ def parse_idx(form: dict[str, str]) -> int | None:
 
 
 def acknowledge_alert(form: dict[str, str]) -> str:
-    if not STATE.acknowledge_alert(form.get("key", "")):
+    if not STATE.toggle_alert_acknowledgement(form.get("key", "")):
         return "/display"
     refresh_display_from_cached_results(STATE)
     with STATE.output_lock:
@@ -3271,6 +3531,82 @@ def set_led_group_zone(form: dict[str, str]) -> str:
     refresh_leds_from_cached_results(STATE)
     STATE.notify_reload()
     return "/config?ledgroup"
+
+
+def parse_led_priority_color(form: dict[str, str], key: str, custom_key: str) -> str:
+    selected = form.get(key, "")
+    if selected == "custom":
+        return normalize_led_color(form.get(custom_key, ""), "green")
+    return normalize_led_color(selected, "green")
+
+
+def update_led_priorities(form: dict[str, str]) -> str:
+    try:
+        count = int(form.get("count", ""))
+    except ValueError:
+        return "/priority?invalid"
+    priorities: list[LedPriority] = []
+    for idx in range(max(0, count)):
+        match = form.get(f"match_{idx}", "").strip()
+        color = parse_led_priority_color(form, f"color_{idx}", f"custom_color_{idx}")
+        if len(match) > 80:
+            return "/priority?invalid"
+        priorities.append(LedPriority(match, color).normalised())
+    if not priorities:
+        return "/priority?invalid"
+    STATE.set_led_priorities(priorities)
+    refresh_leds_from_cached_results(STATE)
+    refresh_display_from_cached_results(STATE)
+    STATE.notify_reload()
+    if form.get("save") == "1":
+        try:
+            STATE.save_config()
+        except Exception:
+            LOG.exception("Save LED priorities failed")
+            return "/priority?invalid"
+        return "/priority?saved"
+    return "/priority?updated"
+
+
+def add_led_priority(form: dict[str, str]) -> str:
+    match = form.get("match", "").strip()
+    if len(match) > 80:
+        return "/priority?invalid"
+    color = parse_led_priority_color(form, "color", "custom_color")
+    with STATE.lock:
+        STATE.led_priorities.append(LedPriority(match, color).normalised())
+    refresh_leds_from_cached_results(STATE)
+    refresh_display_from_cached_results(STATE)
+    STATE.notify_reload()
+    return "/priority?added"
+
+
+def delete_led_priority(form: dict[str, str]) -> str:
+    idx = parse_idx(form)
+    with STATE.lock:
+        if idx is None or idx < 0 or idx >= len(STATE.led_priorities) or len(STATE.led_priorities) <= 1:
+            return "/priority"
+        STATE.led_priorities.pop(idx)
+        STATE.led_priorities = led_priorities_from_config([asdict(p) for p in STATE.led_priorities])
+    refresh_leds_from_cached_results(STATE)
+    refresh_display_from_cached_results(STATE)
+    STATE.notify_reload()
+    return "/priority?deleted"
+
+
+def move_led_priority(form: dict[str, str]) -> str:
+    idx = parse_idx(form)
+    direction = form.get("dir", "")
+    offset = -1 if direction == "up" else 1 if direction == "down" else 0
+    with STATE.lock:
+        target = -1 if idx is None else idx + offset
+        if offset == 0 or idx is None or idx < 0 or idx >= len(STATE.led_priorities) or target < 0 or target >= len(STATE.led_priorities):
+            return "/priority"
+        STATE.led_priorities[idx], STATE.led_priorities[target] = STATE.led_priorities[target], STATE.led_priorities[idx]
+    refresh_leds_from_cached_results(STATE)
+    refresh_display_from_cached_results(STATE)
+    STATE.notify_reload()
+    return "/priority?moved"
 
 
 def move_zone(form: dict[str, str]) -> str:
