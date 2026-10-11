@@ -172,8 +172,7 @@ button.badge{font-family:inherit;cursor:pointer}
 .sev-watch{background:#f5c40022;color:#f5c400;border:1px solid #f5c400}
 .sev-statement{background:#3b82f622;color:#3b82f6;border:1px solid #3b82f6}
 .sev-advisory{background:#22c55e22;color:#22c55e;border:1px solid #22c55e}
-.code-0{color:var(--magenta);font-weight:700;font-family:monospace}
-.code-n{color:var(--green);font-weight:700;font-family:monospace}
+.code-0,.code-n{color:var(--green);font-weight:700;font-family:monospace}
 .radar-popup{position:fixed;left:50%;top:88px;z-index:1000;width:min(920px,calc(100vw - 32px));height:min(620px,calc(100vh - 104px));min-width:320px;min-height:260px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);background:#050505;border:1px solid var(--border);border-radius:8px;box-shadow:0 18px 70px #000c;overflow:hidden;resize:none;display:none;flex-direction:column}
 .radar-popup.open{display:flex}
 .radar-popup-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px 8px 12px;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px;cursor:move;user-select:none;touch-action:none}
@@ -586,9 +585,35 @@ def severity_for_event(event: str) -> tuple[str, str]:
     return color_css_class(color), color
 
 
+def alert_priority_color(alert: dict[str, str]) -> str:
+    return led_color_for_event(alert.get("event", ""))
+
+
 def priority_badge_style(color: str) -> str:
     color_value = led_color_input_value(color)
     return f"background-color:{color_value}22;color:{color_value};border:1px solid {color_value}"
+
+
+def tft_color_for_priority(color: str) -> str:
+    normalized = normalize_led_color(color, "green")
+    if not normalized.startswith("#"):
+        return "magenta" if normalized == "purple" else normalized
+    red = int(normalized[1:3], 16)
+    green = int(normalized[3:5], 16)
+    blue = int(normalized[5:7], 16)
+    named_colors = {
+        **RemoteLEDController.COLORS,
+        "magenta": RemoteLEDController.COLORS["purple"],
+    }
+    nearest, _ = min(
+        named_colors.items(),
+        key=lambda item: (
+            (red - item[1][0]) ** 2
+            + (green - item[1][1]) ** 2
+            + (blue - item[1][2]) ** 2
+        ),
+    )
+    return "magenta" if nearest == "purple" else nearest
 
 
 def alert_signature(alert: dict[str, str]) -> tuple[str, str, str, str, str, str, str]:
@@ -1968,9 +1993,8 @@ def radar_command_for_zone(zone: Zone, zoom: int | None = None) -> str:
 
 
 def display_area_label_cell(zone: Zone, idx: int) -> str:
-    cls = "code-0" if idx == 0 else "code-n"
     label = safe(zone.code) or "&nbsp;"
-    return f"<td class='{cls}'>{label}</td>"
+    return f"<td class='code-n'>{label}</td>"
 
 
 def radar_zoom_cell(idx: int) -> str:
@@ -1997,7 +2021,7 @@ def display_alert_row(
     expires = short_expiry(alert.get("expires", ""))
     message_type = alert_message_type(alert)
     message_type_cell = safe(message_type) or "<span style='color:var(--text-muted)'>-</span>"
-    _, priority_color = severity_for_event(event)
+    priority_color = alert_priority_color(alert)
     badge_style = priority_badge_style(priority_color)
     ack_key = alert_ack_key(zone, alert)
     acked = alert_is_acknowledged(zone, alert, acknowledged)
@@ -2048,11 +2072,11 @@ def tft_rows_from_results(zones: list[Zone], results: list[ZoneResult]) -> list[
             event = alert.get("event", "")
             expires = short_expiry(alert.get("expires", ""))
             message_type = alert_message_type(alert)
-            _, tft_color = severity_for_event(event)
+            priority_color = alert_priority_color(alert)
             tft_text = tft_alert_text(zone.code, event, expires, message_type)
             if last_tft_zone_idx is not None and last_tft_zone_idx != idx:
                 tft_rows.append(("", "black"))
-            tft_rows.append((tft_text, "magenta" if idx == 0 else tft_color))
+            tft_rows.append((tft_text, tft_color_for_priority(priority_color)))
             last_tft_zone_idx = idx
     return tft_rows
 
