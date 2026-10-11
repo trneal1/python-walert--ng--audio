@@ -520,9 +520,10 @@ def alert_message_type(alert: dict[str, str]) -> str:
     ).strip()
 
 
-def tft_alert_text(zone_code: str, event: str, expires: str) -> str:
+def tft_alert_text(zone_code: str, event: str, expires: str, message_type: str = "") -> str:
     clean_event = re.sub(r"\b(\w+)\s+\1\b", r"\1", event, flags=re.IGNORECASE)
-    parts = [zone_code, clean_event]
+    type_label = "UPD" if message_type.lower() == "update" else ""
+    parts = [zone_code, type_label, clean_event]
     if expires:
         parts.append(expires)
     return " ".join(part for part in parts if part).strip()
@@ -2044,12 +2045,11 @@ def tft_rows_from_results(zones: list[Zone], results: list[ZoneResult]) -> list[
         if not result.fetched or result.zone_key != zone.cache_key() or result.fetch_error:
             continue
         for alert in result.alerts:
-            if alert_message_type_is_update(alert):
-                continue
             event = alert.get("event", "")
             expires = short_expiry(alert.get("expires", ""))
+            message_type = alert_message_type(alert)
             _, tft_color = severity_for_event(event)
-            tft_text = tft_alert_text(zone.code, event, expires)
+            tft_text = tft_alert_text(zone.code, event, expires, message_type)
             if last_tft_zone_idx is not None and last_tft_zone_idx != idx:
                 tft_rows.append(("", "black"))
             tft_rows.append((tft_text, "magenta" if idx == 0 else tft_color))
