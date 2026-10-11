@@ -1067,16 +1067,18 @@ class AppState:
         with self.lock:
             return set(self.acknowledged_alerts)
 
-    def toggle_alert_acknowledgement(self, key: str) -> bool:
+    def toggle_alert_acknowledgement(self, key: str) -> str:
         if not re.fullmatch(r"[0-9a-f]{64}", key):
-            return False
+            return ""
         with self.lock:
             if key in self.acknowledged_alerts:
                 self.acknowledged_alerts.remove(key)
+                action = "unacknowledged"
             else:
                 self.acknowledged_alerts.add(key)
+                action = "acknowledged"
             self.acknowledged_generation += 1
-        return True
+        return action
 
     def air_quality_snapshot(self) -> AirQualityReading:
         with self.lock:
@@ -1648,7 +1650,7 @@ class RemoteLEDController:
         detail = f" ({self.last_error})" if self.last_error else ""
         return f"LED host: {self.host}:{self.port} not connected{detail}"
 
-    def sync_areas(self, zones: list[Zone], results: list[ZoneResult]) -> None:
+    def sync_areas(self, zones: list[Zone], results: list[ZoneResult], blink_new_alerts: bool = True) -> None:
         if not self.configured:
             return
         now = time.monotonic()
@@ -1678,10 +1680,10 @@ class RemoteLEDController:
                 has_removed_alert = signatures != previous and not has_new_alert
                 color_changed = color_name != self.last_colors[led]
 
-                if has_new_alert:
+                if has_new_alert and blink_new_alerts:
                     sent = self._send_alert(led, rgb, blink=True)
                     blink_until = now + LED_BLINK_SECONDS
-                elif has_removed_alert or color_changed or now >= self.blink_until[led]:
+                elif has_new_alert or has_removed_alert or color_changed or now >= self.blink_until[led]:
                     sent = self._send_alert(led, rgb, blink=False)
                     blink_until = 0.0
                 else:
@@ -2070,10 +2072,14 @@ def sync_area_leds(state: AppState, zones: list[Zone], results: list[ZoneResult]
     state.leds.sync_areas(zones, results)
 
 
-def refresh_leds_from_cached_results(state: AppState) -> None:
+def refresh_leds_from_cached_results(state: AppState, blink_new_alerts: bool = True) -> None:
     zones = state.zones_snapshot()
     results = state.result_snapshot()
-    state.leds.sync_areas(zones, suppress_acknowledged_alerts(zones, results, state.acknowledged_snapshot()))
+    state.leds.sync_areas(
+        zones,
+        suppress_acknowledged_alerts(zones, results, state.acknowledged_snapshot()),
+        blink_new_alerts=blink_new_alerts,
+    )
 
 
 def sync_audio_alerts(state: AppState, zones: list[Zone], results: list[ZoneResult]) -> None:
@@ -3435,12 +3441,13 @@ def parse_idx(form: dict[str, str]) -> int | None:
 
 
 def acknowledge_alert(form: dict[str, str]) -> str:
-    if not STATE.toggle_alert_acknowledgement(form.get("key", "")):
+    action = STATE.toggle_alert_acknowledgement(form.get("key", ""))
+    if not action:
         return "/display"
     refresh_display_from_cached_results(STATE)
     with STATE.output_lock:
         refresh_tft_from_cached_results(STATE)
-        refresh_leds_from_cached_results(STATE)
+        refresh_leds_from_cached_results(STATE, blink_new_alerts=action != "unacknowledged")
         STATE.notify_reload()
     return "/display"
 
